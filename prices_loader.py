@@ -30,7 +30,7 @@ def get_default_procedures():
         "procedures": [],
         "clinic_info": {
             "address_sochi": "Сочи, ул. Воровского, 22",
-            "address_adler": "Адлер, ул. Бестужева 1/1 ТЦ Мандарин, 1 этаж",
+            "address_adler": "Адлер, ул. Кирова, 26а",
             "phone": "8-928-458-32-88",
             "hours": "Ежедневно 10:00–20:00",
             "no_installment": "Рассрочка и кредитование НЕ предоставляются"
