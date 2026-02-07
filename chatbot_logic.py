@@ -1,4 +1,5 @@
 import replicate
+import re
 
 SYSTEM_PROMPT = """
 Ты — менеджер клиники эстетической медицины GLADIS в Сочи. Твое имя — Александра.
@@ -168,6 +169,73 @@ def generate_bot_reply(api_key: str, message: str) -> str:
     except Exception as e:
         print(f"❌ Ошибка AI: {str(e)}")
         return "Извините, возникла техническая ошибка. Пожалуйста, позвоните в клинику GLADIS по телефону 8-928-458-32-88. Адрес: Сочи, ул. Воровского, 22. Ежедневно 10:00-20:00."
+
+def extract_name_with_ai(api_key: str, message: str) -> str:
+    """
+    Использует AI для извлечения имени из сообщения.
+    """
+    try:
+        prompt = f"""
+Найди имя человека в сообщении. Верни ТОЛЬКО имя или "not_found" если имени нет.
+Сообщение: "{message}"
+Имя:"""
+
+        client = replicate.Client(api_token=api_key)
+        
+        output = client.run(
+            "meta/meta-llama-3-70b-instruct",
+            input={
+                "prompt": prompt,
+                "max_tokens": 20,
+                "temperature": 0.1,
+                "top_p": 0.9,
+                "stop_sequences": ["\n", ".", ","]
+            }
+        )
+        
+        # Обрабатываем ответ
+        result = ""
+        if hasattr(output, '__iter__') and not isinstance(output, str):
+            for chunk in output:
+                if isinstance(chunk, str):
+                    result += chunk
+                else:
+                    result += str(chunk)
+        elif isinstance(output, str):
+            result = output
+        else:
+            result = str(output)
+        
+        result = result.strip().lower()
+        
+        print(f"🔍 AI поиск имени из '{message}': получил '{result}'")
+        
+        # Очищаем ответ
+        if result in ['not_found', 'none', 'null', 'нет', 'no name', '']:
+            return None
+        
+        # Удаляем кавычки и лишние символы
+        result = re.sub(r'["\'\.,!?]', '', result).strip()
+        
+        if not result:
+            return None
+        
+        # Капитализируем первую букву
+        if '-' in result:
+            parts = result.split('-')
+            result = '-'.join([part.capitalize() for part in parts])
+        else:
+            result = result.capitalize()
+        
+        # Проверяем что это похоже на имя (только буквы и дефисы)
+        if not re.match(r'^[А-ЯЁа-яё\-]+$', result):
+            return None
+        
+        return result if result else None
+            
+    except Exception as e:
+        print(f"❌ Ошибка AI при извлечении имени: {str(e)}")
+        return None
 
 def check_interesting_application(text: str):
     """
