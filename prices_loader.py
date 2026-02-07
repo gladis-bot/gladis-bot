@@ -37,16 +37,34 @@ def get_default_procedures():
         }
     }
 
-def get_procedure_by_name(procedure_name: str):
+def get_price_for_procedure(procedure_name: str, zone: str = None):
     """
-    Ищет процедуру по названию (частичное совпадение).
+    Ищет цену для процедуры и зоны.
     """
     data = load_procedures()
     procedure_name_lower = procedure_name.lower()
     
     for procedure in data.get('procedures', []):
-        if procedure_name_lower in procedure.get('name', '').lower():
-            return procedure
+        proc_name = procedure.get('name', '').lower()
+        
+        # Проверяем частичное совпадение названия
+        if procedure_name_lower in proc_name or any(word in proc_name for word in procedure_name_lower.split()):
+            
+            # Если есть зона, ищем цену для зоны
+            if zone and 'prices' in procedure:
+                zone_lower = zone.lower()
+                for price_zone, price in procedure['prices'].items():
+                    if zone_lower in price_zone.lower():
+                        return price
+            
+            # Если есть комплексы, возвращаем их
+            if 'complexes' in procedure:
+                return procedure['complexes']
+            
+            # Или возвращаем первую цену если есть
+            if 'prices' in procedure and procedure['prices']:
+                first_price = next(iter(procedure['prices'].values()))
+                return first_price
     
     return None
 
@@ -57,74 +75,54 @@ def get_clinic_info():
     data = load_procedures()
     return data.get('clinic_info', {})
 
-def format_procedure_info(procedure):
+def search_procedures_by_category(category: str):
     """
-    Форматирует информацию о процедуре для вывода.
-    """
-    if not procedure:
-        return "Информация о процедуре не найдена."
-    
-    result = f"📋 {procedure.get('name', 'Процедура')}\n"
-    
-    if 'locations' in procedure:
-        result += "\n📍 Доступно в:\n"
-        for location, lasers in procedure['locations'].items():
-            result += f"  - {location.capitalize()}: {', '.join(lasers)}\n"
-    
-    if 'prices_hybrid' in procedure:
-        result += "\n💰 Цены на гибридном лазере:\n"
-        for zone, price in procedure['prices_hybrid'].items():
-            result += f"  - {zone}: {price} руб.\n"
-    
-    if 'prices_alexandrite' in procedure:
-        result += "\n💰 Цены на александритовом лазере:\n"
-        for zone, price in procedure['prices_alexandrite'].items():
-            result += f"  - {zone}: {price} руб.\n"
-    
-    if 'complexes' in procedure:
-        result += "\n🎁 Выгодные комплексы:\n"
-        for laser_type, complexes in procedure['complexes'].items():
-            result += f"  {laser_type.capitalize()}:\n"
-            for complex_item in complexes:
-                result += f"    • {complex_item}\n"
-    
-    if 'course' in procedure:
-        result += "\n📅 Курс процедур:\n"
-        for laser_type, course_info in procedure['course'].items():
-            result += f"  - {laser_type}: {course_info}\n"
-    
-    if 'types' in procedure:
-        result += "\n📝 Виды процедур:\n"
-        for type_item in procedure['types']:
-            result += f"  - {type_item.get('name')}: {type_item.get('price')} руб.\n"
-    
-    if 'note' in procedure:
-        result += f"\n💡 {procedure['note']}\n"
-    
-    return result
-
-def search_procedures_by_keyword(keyword: str):
-    """
-    Ищет процедуры по ключевому слову.
+    Ищет процедуры по категории.
     """
     data = load_procedures()
-    keyword_lower = keyword.lower()
+    category_lower = category.lower()
     results = []
     
     for procedure in data.get('procedures', []):
-        procedure_name = procedure.get('name', '').lower()
-        procedure_category = procedure.get('category', '').lower()
+        proc_category = procedure.get('category', '').lower()
         
-        if (keyword_lower in procedure_name or 
-            keyword_lower in procedure_category or
-            any(keyword_lower in str(value).lower() for value in procedure.values() if isinstance(value, str))):
+        if category_lower in proc_category:
             results.append(procedure)
     
     return results
 
+def format_price_response(procedure_name: str, price_info):
+    """
+    Форматирует ответ с ценой.
+    """
+    if isinstance(price_info, dict):
+        # Если это словарь цен (например, для лазерной эпиляции)
+        response = f"💰 Цены на {procedure_name}:\n"
+        for zone, price in price_info.items():
+            response += f"  • {zone}: {price} руб.\n"
+        return response
+    elif isinstance(price_info, (int, float)):
+        # Если это одна цена
+        return f"💰 {procedure_name}: {price_info} руб."
+    else:
+        return f"Информация о ценах на {procedure_name} доступна на консультации."
+
+def get_all_categories():
+    """
+    Возвращает все категории процедур.
+    """
+    data = load_procedures()
+    categories = set()
+    
+    for procedure in data.get('procedures', []):
+        if 'category' in procedure:
+            categories.add(procedure['category'])
+    
+    return list(categories)
+
 # Тестовый вызов
 if __name__ == "__main__":
-    print("🧪 Тестируем загрузку процедур")
+    print("🧪 Тестируем загрузку процедур с ценами")
     
     procedures = load_procedures()
     clinic_info = get_clinic_info()
@@ -138,10 +136,22 @@ if __name__ == "__main__":
     
     print(f"\n📋 Всего процедур: {len(procedures.get('procedures', []))}")
     
-    # Тестируем поиск
-    test_searches = ["эпиляция", "чистка", "тату"]
-    for search in test_searches:
-        found = search_procedures_by_keyword(search)
-        print(f"\n🔍 Поиск '{search}': найдено {len(found)}")
-        for proc in found[:2]:
-            print(f"  - {proc.get('name')}")
+    # Тестируем поиск цен
+    test_cases = [
+        ("лазерная эпиляция", "подмышки"),
+        ("ботулотоксин", None),
+        ("чистка лица", None)
+    ]
+    
+    for proc_name, zone in test_cases:
+        price = get_price_for_procedure(proc_name, zone)
+        print(f"\n🔍 Поиск цены для '{proc_name}' {f'зона {zone}' if zone else ''}:")
+        if price:
+            if isinstance(price, dict):
+                print(f"  Найдено {len(price)} вариантов")
+                for key, val in list(price.items())[:3]:
+                    print(f"  - {key}: {val} руб")
+            else:
+                print(f"  Цена: {price} руб")
+        else:
+            print("  Цена не найдена")
