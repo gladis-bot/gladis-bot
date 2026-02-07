@@ -120,7 +120,8 @@ def analyze_client_needs(message: str, session: Dict[str, Any]) -> str:
     if found_procedure:
         proc_info = procedures_info[found_procedure]
         
-        response = f"Отлично! {proc_info['description']}.\n\n"
+        response = f"Здравствуйте! Клиника GLADIS, меня зовут Александра.\n\n"
+        response += f"Отлично! {proc_info['description']}.\n\n"
         response += f"📋 У нас есть следующие варианты {proc_info['name'].lower()}:\n"
         
         for i, proc_type in enumerate(proc_info['types'], 1):
@@ -142,7 +143,8 @@ def analyze_client_needs(message: str, session: Dict[str, Any]) -> str:
         
     else:
         # Если не поняли процедуру
-        response = "Расскажите подробнее, что вас интересует?\n\n"
+        response = "Здравствуйте! Клиника GLADIS, меня зовут Александра.\n\n"
+        response += "Расскажите подробнее, что вас интересует?\n\n"
         response += "Например:\n"
         response += "- Чистка или пилинг для лица\n"
         response += "- Лазерная эпиляция\n"
@@ -184,7 +186,41 @@ def clarify_procedure_details(message: str, session: Dict[str, Any]) -> str:
             session['stage'] = 'contact_collection'
             return "Спасибо за информацию! Теперь я могу порекомендовать оптимальный вариант.\n\nДля записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
         else:
-            return "Расскажите еще о ваших ожиданиях от процедуры?"
+            next_question = get_next_question(session)
+            return next_question
+
+def get_next_question(session: Dict[str, Any]) -> str:
+    """Возвращает следующий вопрос в зависимости от процедуры."""
+    procedure = session.get('procedure_category', '').lower()
+    questions_answered = len(session.get('questions_answered', []))
+    
+    if 'эпиляция' in procedure:
+        if questions_answered == 0:
+            return "Какие зоны интересуют? (подмышки, бикини, ноги, лицо и т.д.)"
+        elif questions_answered == 1:
+            return "Какой у вас тип кожи и цвет волос? (светлые/темные, тонкие/грубые)"
+        elif questions_answered == 2:
+            return "Делали ли лазерную эпиляцию раньше? Если да, то на каком аппарате?"
+    
+    elif 'чистка' in procedure or 'пилинг' in procedure:
+        if questions_answered == 0:
+            return "Какой тип кожи у вас? (жирная, сухая, комбинированная, проблемная)"
+        elif questions_answered == 1:
+            return "Какие проблемы кожи хотите решить? (акне, расширенные поры, пигментация, морщины)"
+    
+    elif 'ботокс' in procedure:
+        if questions_answered == 0:
+            return "Какие зоны интересуют? (лоб, межбровье, гусиные лапки)"
+        elif questions_answered == 1:
+            return "Делали ли инъекции ботулотоксина раньше? Если да, то как давно?"
+    
+    elif 'лифтинг' in procedure:
+        if questions_answered == 0:
+            return "Какие зоны интересуют? (лицо, шея, декольте, руки)"
+        elif questions_answered == 1:
+            return "Какой возраст кожи и насколько выражены возрастные изменения?"
+    
+    return "Расскажите еще о ваших ожиданиях от процедуры?"
 
 def handle_epilation_details(message: str, session: Dict[str, Any]) -> str:
     """Уточнение деталей для эпиляции."""
@@ -221,11 +257,10 @@ def handle_epilation_details(message: str, session: Dict[str, Any]) -> str:
     # Проверяем, достаточно ли информации
     questions_answered = len(session.get('questions_answered', []))
     
-    if questions_answered == 1:
-        return "Какой у вас тип кожи и цвет волос? (светлые/темные, тонкие/грубые)"
-    elif questions_answered == 2:
-        return "Делали ли лазерную эпиляцию раньше? Если да, то на каком аппарате?"
-    elif questions_answered >= 3:
+    if questions_answered < 3:
+        next_q = get_next_question(session)
+        return next_q
+    else:
         session['stage'] = 'contact_collection'
         return prepare_epilation_summary(session)
 
@@ -238,8 +273,8 @@ def prepare_epilation_summary(session: Dict[str, Any]) -> str:
     
     if session.get('laser_type'):
         laser_info = {
-            "гибридный": "Laser Innovation (гибридный) - более мягкий, больше сеансов",
-            "александритовый": "Laser Quanta System (александритовый) - более мощный, меньше сеансов"
+            "гибридный": "Laser Innovation (гибридный) - более мягкий, больше сеансов (8-12)",
+            "александритовый": "Laser Quanta System (александритовый) - более мощный, меньше сеансов (5-7)"
         }
         summary += f"💡 Рекомендуемый лазер: {laser_info.get(session['laser_type'], session['laser_type'])}\n"
     
@@ -275,11 +310,10 @@ def handle_skin_procedure_details(message: str, session: Dict[str, Any]) -> str:
     
     questions_answered = len(session.get('questions_answered', []))
     
-    if questions_answered == 1:
-        return "Какой результат хотите получить? (чистая кожа, омоложение, лечение акне, осветление)"
-    elif questions_answered == 2:
-        return "Были ли у вас подобные процедуры раньше? Если да, то какие?"
-    elif questions_answered >= 3:
+    if questions_answered < 2:
+        next_q = get_next_question(session)
+        return next_q
+    else:
         session['stage'] = 'contact_collection'
         return prepare_skin_procedure_summary(session)
 
@@ -295,10 +329,10 @@ def prepare_skin_procedure_summary(session: Dict[str, Any]) -> str:
         
         # Рекомендации на основе проблем
         recommendations = {
-            "акне": "Рекомендую комплексное лечение с фотодинамической терапией",
-            "пигментация": "Идеально подойдет фотоомоложение Lumeca",
-            "купероз": "Лучше всего лазерное удаление сосудов",
-            "морщины": "Рассмотрите микроигольчатый RF-лифтинг или ботулотоксин"
+            "акне": "Рекомендую комплексное лечение с фотодинамической терапией (7000 руб)",
+            "пигментация": "Идеально подойдет фотоомоложение Lumeca (от 6000 руб)",
+            "купероз": "Лучше всего лазерное удаление сосудов (1500 руб/кв.см)",
+            "морщины": "Рассмотрите микроигольчатый RF-лифтинг (от 16500 руб) или ботулотоксин (250 руб/ед)"
         }
         
         for problem, rec in recommendations.items():
@@ -326,9 +360,10 @@ def handle_botox_details(message: str, session: Dict[str, Any]) -> str:
     
     questions_answered = len(session.get('questions_answered', []))
     
-    if questions_answered == 1:
-        return "Делали ли инъекции ботулотоксина раньше? Если да, то как давно?"
-    elif questions_answered >= 2:
+    if questions_answered < 2:
+        next_q = get_next_question(session)
+        return next_q
+    else:
         session['stage'] = 'contact_collection'
         
         summary = "✅ Отлично! На основе ваших ответов:\n\n"
@@ -347,104 +382,3 @@ def handle_lifting_details(message: str, session: Dict[str, Any]) -> str:
     message_lower = message.lower()
     
     # Определяем зоны
-    zones = ["лицо", "шея", "декольте", "руки", "живот", "бедра"]
-    found_zones = []
-    for zone in zones:
-        if zone in message_lower:
-            found_zones.append(zone)
-    
-    if found_zones:
-        session['zones'] = found_zones
-    
-    questions_answered = len(session.get('questions_answered', []))
-    
-    if questions_answered == 1:
-        return "Какой возраст кожи и насколько выражены возрастные изменения?"
-    elif questions_answered >= 2:
-        session['stage'] = 'contact_collection'
-        
-        summary = "✅ Поняла! Рекомендации:\n\n"
-        
-        if session.get('zones'):
-            summary += f"📍 Зоны: {', '.join(session['zones'])}\n"
-            
-            # Рекомендации по процедурам
-            if "лицо" in session['zones'] or "шея" in session['zones']:
-                summary += "💡 Для лица и шеи идеально подойдет:\n"
-                summary += "   - SMAS-лифтинг от 14000 руб\n"
-                summary += "   - Микроигольчатый RF-лифтинг от 16500 руб\n"
-                summary += "   - Комплекс с экзосомами и ФДТ от 60000 руб\n"
-        
-        summary += "\nДля подбора оптимальной процедуры нужна консультация.\n"
-        summary += "Для записи мне нужно ваше имя и телефон."
-        
-        return summary
-
-def should_move_to_contacts(message: str, session: Dict[str, Any]) -> bool:
-    """
-    Определяет, пора ли переходить к сбору контактов.
-    """
-    message_lower = message.lower()
-    
-    # Ключевые слова, указывающие на готовность записаться
-    ready_keywords = [
-        "хочу записаться", "запишите", "можно записаться", 
-        "готов записаться", "давайте запишем", "хочу на процедуру",
-        "интересует запись", "хочу сделать"
-    ]
-    
-    # Если клиент явно говорит о записи
-    if any(keyword in message_lower for keyword in ready_keywords):
-        return True
-    
-    # Если уже было много сообщений в диалоге
-    if session.get('message_count', 0) >= 5:
-        return True
-    
-    return False
-
-def handle_contact_collection(message: str, session: Dict[str, Any]) -> str:
-    """
-    Этап 4: Сбор контактов.
-    """
-    message_lower = message.lower()
-    
-    # Проверяем, есть ли в сообщении имя
-    name_patterns = [
-        r'меня\s+зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
-        r'имя\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
-        r'([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)\s+(?:это|мое имя)',
-        r'зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
-    ]
-    
-    found_name = None
-    for pattern in name_patterns:
-        match = re.search(pattern, message, re.IGNORECASE)
-        if match:
-            found_name = match.group(1)
-            break
-    
-    # Проверяем, есть ли в сообщении телефон
-    phone_pattern = r'[\+7]?[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}'
-    phone_matches = re.findall(phone_pattern, message)
-    
-    # Обновляем данные
-    if found_name and not session['name']:
-        session['name'] = found_name
-    
-    if phone_matches and not session['phone']:
-        session['phone'] = phone_matches[0]
-    
-    # Формируем ответ в зависимости от того, что уже есть
-    has_name = bool(session['name'])
-    has_phone = bool(session['phone'])
-    
-    if has_name and has_phone:
-        return "Спасибо! Сейчас передам всю информацию администратору."
-    elif has_name and not has_phone:
-        return f"Спасибо, {session['name']}! Теперь укажите ваш телефон для связи."
-    elif has_phone and not has_name:
-        return f"Спасибо за телефон! Теперь скажите, как вас зовут?"
-    else:
-        # Если ничего нет, просим оба
-        return "Для записи мне нужно ваше имя и телефон для связи. Укажите их, пожалуйста."
