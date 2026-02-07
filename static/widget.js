@@ -8,25 +8,26 @@
     btn.style.width = "60px";
     btn.style.height = "60px";
     btn.style.borderRadius = "50%";
-    btn.style.background = "linear-gradient(135deg, #8a2be2, #9370db)"; // Фиолетовый градиент как на сайте
+    btn.style.background = "linear-gradient(135deg, #2ecc71, #27ae60)"; // Зеленый градиент
     btn.style.color = "white";
     btn.style.display = "flex";
     btn.style.justifyContent = "center";
     btn.style.alignItems = "center";
     btn.style.cursor = "pointer";
     btn.style.zIndex = "99999";
-    btn.style.boxShadow = "0 4px 12px rgba(138, 43, 226, 0.3)";
+    btn.style.boxShadow = "0 4px 12px rgba(46, 204, 113, 0.3)";
     btn.style.fontSize = "24px";
     btn.style.transition = "all 0.3s ease";
+    btn.style.fontFamily = "Arial, sans-serif"; // Шрифт Arial
     
     // Эффект при наведении
     btn.onmouseover = () => {
         btn.style.transform = "scale(1.1)";
-        btn.style.boxShadow = "0 6px 16px rgba(138, 43, 226, 0.4)";
+        btn.style.boxShadow = "0 6px 16px rgba(46, 204, 113, 0.4)";
     };
     btn.onmouseout = () => {
         btn.style.transform = "scale(1)";
-        btn.style.boxShadow = "0 4px 12px rgba(138, 43, 226, 0.3)";
+        btn.style.boxShadow = "0 4px 12px rgba(46, 204, 113, 0.3)";
     };
     
     document.body.appendChild(btn);
@@ -46,17 +47,19 @@
     box.style.zIndex = "99999";
     box.style.boxShadow = "0 10px 30px rgba(0, 0, 0, 0.15)";
     box.style.overflow = "hidden";
+    box.style.fontFamily = "Arial, sans-serif"; // Шрифт Arial
     document.body.appendChild(box);
 
     // Заголовок чата
     const header = document.createElement("div");
-    header.style.background = "linear-gradient(135deg, #8a2be2, #9370db)";
+    header.style.background = "linear-gradient(135deg, #2ecc71, #27ae60)"; // Зеленый градиент
     header.style.color = "white";
     header.style.padding = "15px";
     header.style.fontWeight = "bold";
     header.style.fontSize = "16px";
     header.style.display = "flex";
     header.style.alignItems = "center";
+    header.style.fontFamily = "Arial, sans-serif";
     header.innerHTML = "💬 Консультация GLADIS";
     box.appendChild(header);
 
@@ -68,11 +71,12 @@
     chat.style.backgroundColor = "#f9f9f9";
     chat.style.fontSize = "14px";
     chat.style.lineHeight = "1.5";
+    chat.style.fontFamily = "Arial, sans-serif";
     
     // Начальное сообщение
     chat.innerHTML = `
-        <div style="background: #e6e6fa; padding: 10px 15px; border-radius: 15px 15px 15px 5px; margin-bottom: 10px; max-width: 80%;">
-            <div style="font-weight: bold; color: #8a2be2; margin-bottom: 5px;">GLADIS Бот</div>
+        <div style="background: #e8f5e9; padding: 10px 15px; border-radius: 15px 15px 15px 5px; margin-bottom: 10px; max-width: 80%;">
+            <div style="font-weight: bold; color: #27ae60; margin-bottom: 5px; font-family: Arial, sans-serif;">GLADIS Бот</div>
             Здравствуйте! Я помогу подобрать процедуру и запишу на консультацию. Чем могу помочь?
         </div>
     `;
@@ -85,6 +89,7 @@
     inputContainer.style.borderTop = "1px solid #e0e0e0";
     inputContainer.style.padding = "10px";
     inputContainer.style.background = "white";
+    inputContainer.style.fontFamily = "Arial, sans-serif";
     box.appendChild(inputContainer);
 
     const input = document.createElement("input");
@@ -96,11 +101,12 @@
     input.style.fontSize = "14px";
     input.style.borderRadius = "25px";
     input.style.backgroundColor = "#f5f5f5";
+    input.style.fontFamily = "Arial, sans-serif";
     inputContainer.appendChild(input);
 
     const sendBtn = document.createElement("button");
     sendBtn.innerHTML = "➤";
-    sendBtn.style.background = "#8a2be2";
+    sendBtn.style.background = "#2ecc71";
     sendBtn.style.color = "white";
     sendBtn.style.border = "none";
     sendBtn.style.borderRadius = "50%";
@@ -113,12 +119,13 @@
     sendBtn.style.justifyContent = "center";
     sendBtn.style.alignItems = "center";
     sendBtn.style.transition = "background 0.3s";
+    sendBtn.style.fontFamily = "Arial, sans-serif";
     
     sendBtn.onmouseover = () => {
-        sendBtn.style.background = "#7a1bd2";
+        sendBtn.style.background = "#27ae60";
     };
     sendBtn.onmouseout = () => {
-        sendBtn.style.background = "#8a2be2";
+        sendBtn.style.background = "#2ecc71";
     };
     
     inputContainer.appendChild(sendBtn);
@@ -135,6 +142,7 @@
     closeBtn.style.fontWeight = "normal";
     closeBtn.style.opacity = "0.8";
     closeBtn.style.transition = "opacity 0.3s";
+    closeBtn.style.fontFamily = "Arial, sans-serif";
     
     closeBtn.onmouseover = () => {
         closeBtn.style.opacity = "1";
@@ -161,8 +169,8 @@
 
         // Показываем сообщение пользователя
         chat.innerHTML += `
-            <div style="text-align: right; margin-bottom: 10px;">
-                <div style="background: #8a2be2; color: white; padding: 10px 15px; border-radius: 15px 15px 5px 15px; display: inline-block; max-width: 80%;">
+            <div style="text-align: right; margin-bottom: 10px; font-family: Arial, sans-serif;">
+                <div style="background: #2ecc71; color: white; padding: 10px 15px; border-radius: 15px 15px 5px 15px; display: inline-block; max-width: 80%;">
                     ${message}
                 </div>
             </div>
@@ -174,8 +182,8 @@
         // Показываем индикатор загрузки
         const loadingId = Date.now();
         chat.innerHTML += `
-            <div id="loading-${loadingId}" style="background: #e6e6fa; padding: 10px 15px; border-radius: 15px 15px 15px 5px; margin-bottom: 10px; max-width: 80%;">
-                <div style="font-weight: bold; color: #8a2be2; margin-bottom: 5px;">GLADIS Бот</div>
+            <div id="loading-${loadingId}" style="background: #e8f5e9; padding: 10px 15px; border-radius: 15px 15px 15px 5px; margin-bottom: 10px; max-width: 80%; font-family: Arial, sans-serif;">
+                <div style="font-weight: bold; color: #27ae60; margin-bottom: 5px; font-family: Arial, sans-serif;">GLADIS Бот</div>
                 <div style="display: flex; align-items: center;">
                     <div class="typing-indicator">
                         <span></span>
@@ -191,7 +199,7 @@
                         .typing-indicator span {
                             height: 8px;
                             width: 8px;
-                            background: #8a2be2;
+                            background: #27ae60;
                             border-radius: 50%;
                             margin: 0 2px;
                             opacity: 0.4;
@@ -229,9 +237,9 @@
             
             // Показываем ответ бота
             chat.innerHTML += `
-                <div style="margin-bottom: 10px;">
-                    <div style="font-weight: bold; color: #8a2be2; margin-bottom: 5px;">GLADIS Бот</div>
-                    <div style="background: #e6e6fa; padding: 10px 15px; border-radius: 15px 15px 15px 5px; max-width: 80%;">
+                <div style="margin-bottom: 10px; font-family: Arial, sans-serif;">
+                    <div style="font-weight: bold; color: #27ae60; margin-bottom: 5px; font-family: Arial, sans-serif;">GLADIS Бот</div>
+                    <div style="background: #e8f5e9; padding: 10px 15px; border-radius: 15px 15px 15px 5px; max-width: 80%;">
                         ${data.reply.replace(/\n/g, '<br>')}
                     </div>
                 </div>
@@ -246,9 +254,9 @@
             
             // Показываем ошибку
             chat.innerHTML += `
-                <div style="margin-bottom: 10px;">
-                    <div style="font-weight: bold; color: #8a2be2; margin-bottom: 5px;">GLADIS Бот</div>
-                    <div style="background: #ffe6e6; padding: 10px 15px; border-radius: 15px 15px 15px 5px; max-width: 80%; color: #d32f2f;">
+                <div style="margin-bottom: 10px; font-family: Arial, sans-serif;">
+                    <div style="font-weight: bold; color: #27ae60; margin-bottom: 5px; font-family: Arial, sans-serif;">GLADIS Бот</div>
+                    <div style="background: #ffebee; padding: 10px 15px; border-radius: 15px 15px 15px 5px; max-width: 80%; color: #d32f2f;">
                         Извините, произошла ошибка. Пожалуйста, попробуйте позже или позвоните нам.
                     </div>
                 </div>
