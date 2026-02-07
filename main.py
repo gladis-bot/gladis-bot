@@ -211,14 +211,22 @@ async def chat_endpoint(request: Request):
     session['text_parts'].append(user_message)
     session['message_count'] += 1
     
-    # Ищем контакты в сообщении
-    phone_pattern = r'[\+7]?[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}'
+    # Ищем контакты в сообщении (улучшенные паттерны)
+    phone_pattern = r'[\+7]?[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2,3}'
     phone_matches = re.findall(phone_pattern, user_message)
     
+    # Также ищем просто 11 цифр подряд
+    if not phone_matches:
+        phone_pattern2 = r'\b\d{10,11}\b'
+        phone_matches = re.findall(phone_pattern2, user_message)
+    
+    # Улучшенные паттерны для имени
     name_patterns = [
         r'меня\s+зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
         r'имя\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
         r'зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
+        r'^([А-ЯЁ][а-яё]+)[,\s]',  # Имя в начале сообщения с запятой или пробелом
+        r'([А-ЯЁ][а-яё]+)\s+(?:это|мое имя|меня)',  # "Вадим это", "Вадим мое имя"
     ]
     
     found_name = None
@@ -226,36 +234,46 @@ async def chat_endpoint(request: Request):
         match = re.search(pattern, user_message, re.IGNORECASE)
         if match:
             found_name = match.group(1)
+            # Удаляем возможные цифры после имени
+            found_name = re.sub(r'\d+$', '', found_name).strip()
             break
+    
+    # Если не нашли по паттернам, ищем русские слова с заглавной буквы
+    if not found_name:
+        words = re.findall(r'[А-ЯЁа-яё]+', user_message)
+        russian_words = [word for word in words if re.match(r'^[А-ЯЁ][а-яё]*$', word)]
+        if russian_words:
+            found_name = russian_words[0]
     
     # Обновляем контакты если найдены
     if phone_matches and not session['phone']:
-        session['phone'] = phone_matches[0]
-        print(f"📞 Найден телефон: {session['phone']}")
+        clean_phone = re.sub(r'\D', '', phone_matches[0])
+        if 10 <= len(clean_phone) <= 11:
+            session['phone'] = clean_phone
+            print(f"📞 Найден телефон: {session['phone']}")
     
     if found_name and not session['name']:
         session['name'] = found_name
         print(f"👤 Найдено имя: {session['name']}")
     
-    # ===== НОВАЯ ЛОГИКА ЭТАПОВ =====
+    # ===== ИСПРАВЛЕННАЯ ЛОГИКА ЭТАПОВ =====
     
     # Этап 1: Анализ потребностей
     if session['stage'] == 'needs_analysis':
         bot_reply = analyze_client_needs(user_message, session)
         
         # Проверяем, переходим ли к следующему этапу
-        if session.get('procedure_category') and '?' in user_message[-3:]:
-            # Если клиент задал вопрос - переходим к консультации
-            session['stage'] = 'consultation'
-        elif session['stage'] == 'details_clarification':
-            # Если перешли к уточнению деталей
-            pass
+        if session.get('procedure_category'):
+            # Если нашли процедуру - переходим к уточнению
+            session['stage'] = 'details_clarification'
         elif should_move_to_contacts(user_message, session):
-            # Если клиент сразу хочет записаться
+            # Если клиент сразу хочет записаться или дает контакты
             session['stage'] = 'contact_collection'
-            bot_reply += "\n\nДля записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
+            # НЕ добавляем повторно запрос контактов, если уже в ответе есть
+            if "ваше имя и телефон" not in bot_reply:
+                bot_reply += "\n\nДля записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
     
-    # Этап 2: Консультация (через AI)
+    # Этап 2: Консультация через AI (ТОЛЬКО для сложных вопросов)
     elif session['stage'] == 'consultation' and REPLICATE_API_TOKEN:
         bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
         
@@ -267,9 +285,10 @@ async def chat_endpoint(request: Request):
         # Проверяем, не пора ли переходить к контактам
         if should_move_to_contacts(user_message, session):
             session['stage'] = 'contact_collection'
-            bot_reply += "\n\nДля записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
+            if "ваше имя и телефон" not in bot_reply:
+                bot_reply += "\n\nДля записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
     
-    # Этап 3: Уточнение деталей (структурированный диалог)
+    # Этап 3: Уточнение деталей процедуры
     elif session['stage'] == 'details_clarification':
         bot_reply = clarify_procedure_details(user_message, session)
         
@@ -295,7 +314,7 @@ async def chat_endpoint(request: Request):
     elif session['stage'] == 'completed':
         bot_reply = "Ваша заявка уже передана администратору. С вами свяжутся для подтверждения записи. 📞 Телефон: 8-928-458-32-88"
     
-    # Резервный вариант: обычный AI ответ
+    # Резервный вариант: AI для нераспознанных сообщений
     else:
         if REPLICATE_API_TOKEN:
             bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
