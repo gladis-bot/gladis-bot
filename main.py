@@ -4,7 +4,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from chatbot_logic import generate_bot_reply, check_interesting_application
-from telegram_utils import send_to_telegram, send_incomplete_to_telegram
+from telegram_utils import send_to_telegram, send_incomplete_to_telegram, send_complete_application_to_telegram
+from dialog_logic import analyze_client_needs, clarify_procedure_details, handle_contact_collection, should_move_to_contacts
 from dotenv import load_dotenv
 import re
 from datetime import datetime, timedelta
@@ -57,7 +58,7 @@ if not env_valid:
 app = FastAPI(
     title="GLADIS Chatbot API",
     description="Чат-бот для клиники эстетической медицины GLADIS в Сочи",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 # Настраиваем CORS
@@ -145,18 +146,18 @@ def cleanup_old_sessions():
         
         # Если сессии больше 10 минут И есть контакт И еще не отправлено
         if (session_age > timedelta(minutes=10) and 
-            not session_data['telegram_sent'] and 
+            not session_data.get('telegram_sent', False) and 
             session_data.get('phone') and 
             session_data.get('name')):
             
             print(f"⏰ ТАЙМАУТ 10 минут: отправляем неполную заявку")
             
-            full_text = "\n".join(session_data['text_parts'])
+            full_text = "\n".join(session_data.get('text_parts', []))
             send_incomplete_to_telegram(
                 full_text, 
                 session_data.get('name'),
                 session_data.get('phone'),
-                session_data.get('procedure')
+                session_data.get('procedure_type')
             )
             session_data['telegram_sent'] = True
             session_data['incomplete_sent'] = True
@@ -182,149 +183,134 @@ async def chat_endpoint(request: Request):
     # Очищаем старые сессии
     cleanup_old_sessions()
 
-    # Проверяем, является ли это интересной заявкой
-    is_interesting = check_interesting_application(user_message)
-    print(f"🔍 Интересная заявка: {is_interesting}")
-
-    # Если это интересная заявка (процедура/запись)
-    if is_interesting:
-        print(f"📋 ЗАЯВКА НА ПРОЦЕДУРУ/КОНСУЛЬТАЦИЮ")
-        
-        # Создаем или получаем сессию
-        if user_ip not in user_sessions:
-            user_sessions[user_ip] = {
-                'created_at': datetime.now(),
-                'name': None,
-                'phone': None,
-                'procedure': None,
-                'text_parts': [],
-                'telegram_sent': False,
-                'incomplete_sent': False,
-                'reminder_sent': False,
-                'message_count': 0
-            }
-        
-        session = user_sessions[user_ip]
-        session['text_parts'].append(user_message)
-        session['message_count'] += 1
-        
-        # Ищем телефон в сообщении
-        phone_pattern = r'[\+7]?[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}'
-        phone_matches = re.findall(phone_pattern, user_message)
-        
-        # Ищем имя
-        name_patterns = [
-            r'меня\s+зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',  # "меня зовут Иван" или "Иван Петров"
-            r'имя\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',  # "имя Анна"
-            r'([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)\s+(?:это|мое имя)',  # "Анна это мое имя"
-            r'зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',  # "зовут Мария"
-        ]
-        
-        found_name = None
-        for pattern in name_patterns:
-            match = re.search(pattern, user_message, re.IGNORECASE)
-            if match:
-                found_name = match.group(1)
-                break
-        
-        # Обновляем найденные данные
-        if phone_matches and not session['phone']:
-            session['phone'] = phone_matches[0]
-            print(f"📞 Найден телефон: {session['phone']}")
-        
-        if found_name and not session['name']:
-            session['name'] = found_name
-            print(f"👤 Найдено имя: {session['name']}")
-        
-        # Определяем процедуру по ключевым словам
-        procedure_keywords = {
-            'SMAS лифтинг': ['smas', 'лифтинг'],
-            'Morpheus8': ['morpheus', 'микроигольчатый'],
-            'Фотодинамическая терапия': ['фотодинамическая', 'терапия'],
-            'Увеличение губ': ['губы', 'увеличение'],
-            'Ботулотоксин': ['ботулин', 'ботокс'],
-            'Чистка лица': ['чистка', 'пилинг'],
-            'Биоревитализация': ['биоревитализация'],
-            'Лазерная эпиляция': ['эпиляция', 'лазерная'],
-            'Фотоомоложение': ['фотоомоложение', 'lumec'],
-            'Капельницы': ['капельницы', 'инфузионная'],
-            'Консультация врача': ['консультация', 'врач', 'прием']
+    # Создаем или получаем сессию
+    if user_ip not in user_sessions:
+        user_sessions[user_ip] = {
+            'created_at': datetime.now(),
+            'name': None,
+            'phone': None,
+            'procedure_category': None,      # Категория (эпиляция, чистка и т.д.)
+            'procedure_type': None,          # Конкретный тип (карбоновый пилинг и т.д.)
+            'zone': None,                    # Зона (лицо, ноги и т.д.)
+            'laser_type': None,              # Тип лазера (гибридный/александритовый)
+            'location': None,                # Сочи или Адлер
+            'skin_type': None,               # Тип кожи
+            'skin_problems': [],             # Проблемы кожи
+            'zones': [],                     # Зоны для процедуры
+            'preferences': [],               # Предпочтения клиента
+            'questions_answered': [],        # Ответы на вопросы
+            'stage': 'needs_analysis',       # Текущий этап диалога
+            'text_parts': [],
+            'telegram_sent': False,
+            'incomplete_sent': False,
+            'message_count': 0,
+            'consultation_complete': False   # Консультация завершена
         }
+    
+    session = user_sessions[user_ip]
+    session['text_parts'].append(user_message)
+    session['message_count'] += 1
+    
+    # Ищем контакты в сообщении
+    phone_pattern = r'[\+7]?[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}'
+    phone_matches = re.findall(phone_pattern, user_message)
+    
+    name_patterns = [
+        r'меня\s+зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
+        r'имя\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
+        r'зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
+    ]
+    
+    found_name = None
+    for pattern in name_patterns:
+        match = re.search(pattern, user_message, re.IGNORECASE)
+        if match:
+            found_name = match.group(1)
+            break
+    
+    # Обновляем контакты если найдены
+    if phone_matches and not session['phone']:
+        session['phone'] = phone_matches[0]
+        print(f"📞 Найден телефон: {session['phone']}")
+    
+    if found_name and not session['name']:
+        session['name'] = found_name
+        print(f"👤 Найдено имя: {session['name']}")
+    
+    # ===== НОВАЯ ЛОГИКА ЭТАПОВ =====
+    
+    # Этап 1: Анализ потребностей
+    if session['stage'] == 'needs_analysis':
+        bot_reply = analyze_client_needs(user_message, session)
         
-        if not session['procedure']:
-            for proc_name, keywords in procedure_keywords.items():
-                if any(kw in user_message.lower() for kw in keywords):
-                    session['procedure'] = proc_name
-                    print(f"💉 Определена процедура: {proc_name}")
-                    break
+        # Проверяем, переходим ли к следующему этапу
+        if session.get('procedure_category') and '?' in user_message[-3:]:
+            # Если клиент задал вопрос - переходим к консультации
+            session['stage'] = 'consultation'
+        elif session['stage'] == 'details_clarification':
+            # Если перешли к уточнению деталей
+            pass
+        elif should_move_to_contacts(user_message, session):
+            # Если клиент сразу хочет записаться
+            session['stage'] = 'contact_collection'
+            bot_reply += "\n\nДля записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
+    
+    # Этап 2: Консультация (через AI)
+    elif session['stage'] == 'consultation' and REPLICATE_API_TOKEN:
+        bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
         
-        # Логируем состояние сессии
-        print(f"📊 СОСТОЯНИЕ СЕССИИ:")
-        print(f"   📝 Сообщений: {session['message_count']}")
-        print(f"   👤 Имя: {'✅ ' + session['name'] if session['name'] else '❌ Нет'}")
-        print(f"   📞 Телефон: {'✅ ' + str(session['phone']) if session['phone'] else '❌ Нет'}")
-        print(f"   💉 Процедура: {'✅ ' + session['procedure'] if session['procedure'] else '❌ Не указана'}")
-        print(f"   📨 Отправлено в Telegram: {'✅' if session['telegram_sent'] else '❌'}")
+        # Сохраняем ответы на вопросы
+        if 'questions_answered' not in session:
+            session['questions_answered'] = []
+        session['questions_answered'].append(user_message)
         
-        # ===== ЛОГИКА ОТВЕТА БОТА =====
+        # Проверяем, не пора ли переходить к контактам
+        if should_move_to_contacts(user_message, session):
+            session['stage'] = 'contact_collection'
+            bot_reply += "\n\nДля записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
+    
+    # Этап 3: Уточнение деталей (структурированный диалог)
+    elif session['stage'] == 'details_clarification':
+        bot_reply = clarify_procedure_details(user_message, session)
         
-        # Случай 1: Уже отправлено в Telegram
-        if session['telegram_sent']:
-            if session.get('incomplete_sent'):
-                bot_reply = "Ваша заявка принята! Мы свяжемся с вами для уточнения деталей. Спасибо!"
-            else:
-                bot_reply = "Спасибо! Ваша заявка передана менеджеру. С вами свяжутся в течение 30 минут."
+        # Если функция вернула, что нужно перейти к контактам
+        if "Для записи мне нужно" in bot_reply or "ваше имя и телефон" in bot_reply:
+            session['stage'] = 'contact_collection'
+    
+    # Этап 4: Сбор контактов
+    elif session['stage'] == 'contact_collection':
+        bot_reply = handle_contact_collection(user_message, session)
         
-        # Случай 2: Есть имя и телефон - отправляем ПОЛНУЮ заявку
-        elif session['name'] and session['phone']:
-            print(f"📨 ОТПРАВЛЯЕМ ПОЛНУЮ ЗАЯВКУ")
+        # Если собрали все контакты - отправляем в Telegram
+        if session['name'] and session['phone']:
+            print(f"📨 ОТПРАВЛЯЕМ ПОЛНУЮ ФАБУЛУ В TELEGRAM")
             full_text = "\n".join(session['text_parts'])
-            success = send_to_telegram(
-                full_text, 
-                session['name'], 
-                session['phone'],
-                session.get('procedure')
-            )
+            success = send_complete_application_to_telegram(session, full_text)
             if success:
                 session['telegram_sent'] = True
-                bot_reply = "Спасибо! Ваша заявка передана менеджеру. С вами свяжутся в течение 30 минут."
-            else:
-                bot_reply = "Произошла ошибка. Пожалуйста, попробуйте еще раз или позвоните нам."
-        
-        # Случай 3: Есть только имя ИЛИ телефон
-        elif session['name'] or session['phone']:
-            has_name = bool(session['name'])
-            has_phone = bool(session['phone'])
-            
-            if not session['reminder_sent'] and session['message_count'] >= 2:
-                if has_name and not has_phone:
-                    bot_reply = f"Спасибо, {session['name']}! Для записи нужен ваш телефон."
-                elif has_phone and not has_name:
-                    bot_reply = "Спасибо за телефон! Как вас зовут?"
-                session['reminder_sent'] = True
-            
-            else:
-                if has_name and not has_phone:
-                    bot_reply = f"Спасибо, {session['name']}! Укажите ваш телефон."
-                elif has_phone and not has_name:
-                    bot_reply = "Спасибо за телефон! Как вас зовут?"
-                else:
-                    bot_reply = "Для записи нужно ваше имя и телефон."
-        
-        # Случай 4: Нет контактов
-        else:
-            bot_reply = "Для записи на процедуру укажите ваше имя и телефон."
+                session['stage'] = 'completed'
+                bot_reply += "\n\n✅ Спасибо! Вся информация передана администратору. С вами свяжутся для подтверждения записи."
     
-    # Обычный запрос (не заявка)
+    # Этап 5: Завершено
+    elif session['stage'] == 'completed':
+        bot_reply = "Ваша заявка уже передана администратору. С вами свяжутся для подтверждения записи. 📞 Телефон: 8-928-458-32-88"
+    
+    # Резервный вариант: обычный AI ответ
     else:
-        print(f"💭 Обычный запрос/вопрос")
         if REPLICATE_API_TOKEN:
             bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
         else:
-            bot_reply = "Извините, сервис временно недоступен. Пожалуйста, позвоните нам."
-            print("⚠️ REPLICATE_API_TOKEN отсутствует")
-
-    print(f"🤖 Ответ бота: '{bot_reply}'")
+            bot_reply = "Извините, сервис временно недоступен. Пожалуйста, позвоните по телефону 8-928-458-32-88"
+    
+    # Логируем состояние сессии
+    print(f"📊 СОСТОЯНИЕ СЕССИИ:")
+    print(f"   Этап: {session['stage']}")
+    print(f"   Процедура: {session.get('procedure_category', 'Не выбрана')}")
+    print(f"   👤 Имя: {'✅ ' + session['name'] if session['name'] else '❌ Нет'}")
+    print(f"   📞 Телефон: {'✅ ' + str(session['phone']) if session['phone'] else '❌ Нет'}")
+    print(f"   📨 Отправлено: {'✅' if session.get('telegram_sent') else '❌'}")
+    
+    print(f"🤖 Ответ бота: '{bot_reply[:100]}...'" if len(bot_reply) > 100 else f"🤖 Ответ бота: '{bot_reply}'")
     print("="*40)
     
     return {"reply": bot_reply}
@@ -347,7 +333,7 @@ async def health_check(request: Request):
         "timestamp": datetime.now().isoformat(),
         "sessions_count": len(user_sessions),
         "services": services_status,
-        "version": "1.0.0"
+        "version": "2.0.0"
     }
 
 @app.get("/")
@@ -357,7 +343,7 @@ async def root():
         "service": "GLADIS Chatbot API",
         "description": "Чат-бот для клиники эстетической медицины GLADIS в Сочи",
         "status": "running",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "timestamp": datetime.now().isoformat(),
         "endpoints": {
             "chat": {
@@ -385,6 +371,30 @@ async def ping():
         "status": "pong",
         "timestamp": datetime.now().isoformat(),
         "service": "gladis-chatbot"
+    }
+
+@app.get("/debug/sessions")
+async def debug_sessions():
+    """Просмотр активных сессий (только для отладки)."""
+    now = datetime.now()
+    active_sessions = {}
+    
+    for session_id, session_data in user_sessions.items():
+        session_age = now - session_data['created_at']
+        active_sessions[session_id] = {
+            "age_minutes": round(session_age.total_seconds() / 60, 1),
+            "name": session_data['name'],
+            "phone": session_data['phone'],
+            "procedure": session_data.get('procedure_category'),
+            "stage": session_data.get('stage'),
+            "message_count": session_data.get('message_count', 0),
+            "telegram_sent": session_data.get('telegram_sent', False)
+        }
+    
+    return {
+        "active_sessions_count": len(user_sessions),
+        "current_time": now.isoformat(),
+        "sessions": active_sessions
     }
 
 # Обработчики ошибок
