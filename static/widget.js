@@ -1,58 +1,60 @@
 (function () {
-    // Создаем кнопку чата
-    const btn = document.createElement("div");
-    btn.innerHTML = "💬";
-    btn.style.position = "fixed";
-    btn.style.bottom = "20px";
-    btn.style.right = "20px";
-    btn.style.width = "60px";
-    btn.style.height = "60px";
-    btn.style.borderRadius = "50%";
-    btn.style.background = "linear-gradient(135deg, #2ecc71, #27ae60)"; // Зеленый градиент
-    btn.style.color = "white";
-    btn.style.display = "flex";
-    btn.style.justifyContent = "center";
-    btn.style.alignItems = "center";
-    btn.style.cursor = "pointer";
-    btn.style.zIndex = "99999";
-    btn.style.boxShadow = "0 4px 12px rgba(46, 204, 113, 0.3)";
-    btn.style.fontSize = "24px";
-    btn.style.transition = "all 0.3s ease";
-    btn.style.fontFamily = "Arial, sans-serif"; // Шрифт Arial
+    // Создаем значок диалога (иконка чата)
+    const chatIcon = document.createElement("div");
+    chatIcon.innerHTML = `
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="white">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+        </svg>
+    `;
+    chatIcon.style.position = "fixed";
+    chatIcon.style.bottom = "25px";
+    chatIcon.style.right = "25px";
+    chatIcon.style.width = "60px";
+    chatIcon.style.height = "60px";
+    chatIcon.style.borderRadius = "50%";
+    chatIcon.style.background = "linear-gradient(135deg, #2ecc71, #27ae60)";
+    chatIcon.style.color = "white";
+    chatIcon.style.display = "flex";
+    chatIcon.style.justifyContent = "center";
+    chatIcon.style.alignItems = "center";
+    chatIcon.style.cursor = "pointer";
+    chatIcon.style.zIndex = "99999";
+    chatIcon.style.boxShadow = "0 4px 12px rgba(46, 204, 113, 0.3)";
+    chatIcon.style.transition = "all 0.3s ease";
     
     // Эффект при наведении
-    btn.onmouseover = () => {
-        btn.style.transform = "scale(1.1)";
-        btn.style.boxShadow = "0 6px 16px rgba(46, 204, 113, 0.4)";
+    chatIcon.onmouseover = () => {
+        chatIcon.style.transform = "scale(1.1)";
+        chatIcon.style.boxShadow = "0 6px 16px rgba(46, 204, 113, 0.4)";
     };
-    btn.onmouseout = () => {
-        btn.style.transform = "scale(1)";
-        btn.style.boxShadow = "0 4px 12px rgba(46, 204, 113, 0.3)";
+    chatIcon.onmouseout = () => {
+        chatIcon.style.transform = "scale(1)";
+        chatIcon.style.boxShadow = "0 4px 12px rgba(46, 204, 113, 0.3)";
     };
     
-    document.body.appendChild(btn);
+    document.body.appendChild(chatIcon);
 
-    // Создаем окно чата
-    const box = document.createElement("div");
-    box.style.position = "fixed";
-    box.style.bottom = "100px";
-    box.style.right = "20px";
-    box.style.width = "350px";
-    box.style.height = "500px";
-    box.style.background = "white";
-    box.style.border = "1px solid #e0e0e0";
-    box.style.borderRadius = "15px";
-    box.style.display = "none";
-    box.style.flexDirection = "column";
-    box.style.zIndex = "99999";
-    box.style.boxShadow = "0 10px 30px rgba(0, 0, 0, 0.15)";
-    box.style.overflow = "hidden";
-    box.style.fontFamily = "Arial, sans-serif"; // Шрифт Arial
-    document.body.appendChild(box);
+    // Создаем окно чата (изначально скрыто)
+    const chatWindow = document.createElement("div");
+    chatWindow.style.position = "fixed";
+    chatWindow.style.bottom = "100px";
+    chatWindow.style.right = "20px";
+    chatWindow.style.width = "350px";
+    chatWindow.style.height = "500px";
+    chatWindow.style.background = "white";
+    chatWindow.style.border = "1px solid #e0e0e0";
+    chatWindow.style.borderRadius = "15px";
+    chatWindow.style.display = "none"; // Изначально скрыто
+    chatWindow.style.flexDirection = "column";
+    chatWindow.style.zIndex = "99998";
+    chatWindow.style.boxShadow = "0 10px 30px rgba(0, 0, 0, 0.15)";
+    chatWindow.style.overflow = "hidden";
+    chatWindow.style.fontFamily = "Arial, sans-serif";
+    document.body.appendChild(chatWindow);
 
     // Заголовок чата
     const header = document.createElement("div");
-    header.style.background = "linear-gradient(135deg, #2ecc71, #27ae60)"; // Зеленый градиент
+    header.style.background = "linear-gradient(135deg, #2ecc71, #27ae60)";
     header.style.color = "white";
     header.style.padding = "15px";
     header.style.fontWeight = "bold";
@@ -60,28 +62,33 @@
     header.style.display = "flex";
     header.style.alignItems = "center";
     header.style.fontFamily = "Arial, sans-serif";
-    header.innerHTML = "💬 Консультация GLADIS";
-    box.appendChild(header);
+    header.innerHTML = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="white" style="margin-right: 10px;">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+        </svg>
+        Консультация GLADIS
+    `;
+    chatWindow.appendChild(header);
 
     // Область сообщений
-    const chat = document.createElement("div");
-    chat.style.flex = "1";
-    chat.style.padding = "15px";
-    chat.style.overflowY = "auto";
-    chat.style.backgroundColor = "#f9f9f9";
-    chat.style.fontSize = "14px";
-    chat.style.lineHeight = "1.5";
-    chat.style.fontFamily = "Arial, sans-serif";
+    const chatArea = document.createElement("div");
+    chatArea.style.flex = "1";
+    chatArea.style.padding = "15px";
+    chatArea.style.overflowY = "auto";
+    chatArea.style.backgroundColor = "#f9f9f9";
+    chatArea.style.fontSize = "14px";
+    chatArea.style.lineHeight = "1.5";
+    chatArea.style.fontFamily = "Arial, sans-serif";
     
     // Начальное сообщение
-    chat.innerHTML = `
+    chatArea.innerHTML = `
         <div style="background: #e8f5e9; padding: 10px 15px; border-radius: 15px 15px 15px 5px; margin-bottom: 10px; max-width: 80%;">
             <div style="font-weight: bold; color: #27ae60; margin-bottom: 5px; font-family: Arial, sans-serif;">GLADIS Бот</div>
             Здравствуйте! Я помогу подобрать процедуру и запишу на консультацию. Чем могу помочь?
         </div>
     `;
     
-    box.appendChild(chat);
+    chatWindow.appendChild(chatArea);
 
     // Поле ввода
     const inputContainer = document.createElement("div");
@@ -90,7 +97,7 @@
     inputContainer.style.padding = "10px";
     inputContainer.style.background = "white";
     inputContainer.style.fontFamily = "Arial, sans-serif";
-    box.appendChild(inputContainer);
+    chatWindow.appendChild(inputContainer);
 
     const input = document.createElement("input");
     input.placeholder = "Напишите ваш вопрос...";
@@ -153,14 +160,26 @@
     
     header.appendChild(closeBtn);
 
-    // Функции
-    btn.onclick = () => {
-        box.style.display = box.style.display === "none" ? "flex" : "none";
-    };
+    // Логика открытия/закрытия
+    let isChatOpen = false;
+    
+    function toggleChat() {
+        if (isChatOpen) {
+            // Закрываем чат
+            chatWindow.style.display = "none";
+            isChatOpen = false;
+        } else {
+            // Открываем чат
+            chatWindow.style.display = "flex";
+            isChatOpen = true;
+            // Фокус на поле ввода
+            setTimeout(() => input.focus(), 100);
+        }
+    }
 
-    closeBtn.onclick = () => {
-        box.style.display = "none";
-    };
+    // Обработчики событий
+    chatIcon.onclick = toggleChat;
+    closeBtn.onclick = toggleChat;
 
     // Функция отправки сообщения
     async function sendMessage() {
@@ -168,7 +187,7 @@
         if (!message) return;
 
         // Показываем сообщение пользователя
-        chat.innerHTML += `
+        chatArea.innerHTML += `
             <div style="text-align: right; margin-bottom: 10px; font-family: Arial, sans-serif;">
                 <div style="background: #2ecc71; color: white; padding: 10px 15px; border-radius: 15px 15px 5px 15px; display: inline-block; max-width: 80%;">
                     ${message}
@@ -177,11 +196,11 @@
         `;
         
         input.value = "";
-        chat.scrollTop = chat.scrollHeight;
+        chatArea.scrollTop = chatArea.scrollHeight;
 
         // Показываем индикатор загрузки
         const loadingId = Date.now();
-        chat.innerHTML += `
+        chatArea.innerHTML += `
             <div id="loading-${loadingId}" style="background: #e8f5e9; padding: 10px 15px; border-radius: 15px 15px 15px 5px; margin-bottom: 10px; max-width: 80%; font-family: Arial, sans-serif;">
                 <div style="font-weight: bold; color: #27ae60; margin-bottom: 5px; font-family: Arial, sans-serif;">GLADIS Бот</div>
                 <div style="display: flex; align-items: center;">
@@ -200,7 +219,7 @@
                             height: 8px;
                             width: 8px;
                             background: #27ae60;
-                            border-radius: 50%;
+                            border-radius: "50%";
                             margin: 0 2px;
                             opacity: 0.4;
                             animation: typing 1s infinite;
@@ -215,7 +234,7 @@
                 </div>
             </div>
         `;
-        chat.scrollTop = chat.scrollHeight;
+        chatArea.scrollTop = chatArea.scrollHeight;
 
         try {
             // URL вашего бота на Render
@@ -236,7 +255,7 @@
             }
             
             // Показываем ответ бота
-            chat.innerHTML += `
+            chatArea.innerHTML += `
                 <div style="margin-bottom: 10px; font-family: Arial, sans-serif;">
                     <div style="font-weight: bold; color: #27ae60; margin-bottom: 5px; font-family: Arial, sans-serif;">GLADIS Бот</div>
                     <div style="background: #e8f5e9; padding: 10px 15px; border-radius: 15px 15px 15px 5px; max-width: 80%;">
@@ -253,7 +272,7 @@
             }
             
             // Показываем ошибку
-            chat.innerHTML += `
+            chatArea.innerHTML += `
                 <div style="margin-bottom: 10px; font-family: Arial, sans-serif;">
                     <div style="font-weight: bold; color: #27ae60; margin-bottom: 5px; font-family: Arial, sans-serif;">GLADIS Бот</div>
                     <div style="background: #ffebee; padding: 10px 15px; border-radius: 15px 15px 15px 5px; max-width: 80%; color: #d32f2f;">
@@ -265,7 +284,7 @@
             console.error("Ошибка чат-бота:", error);
         }
         
-        chat.scrollTop = chat.scrollHeight;
+        chatArea.scrollTop = chatArea.scrollHeight;
     }
 
     // Обработчики событий
@@ -276,12 +295,4 @@
     });
 
     sendBtn.onclick = sendMessage;
-
-    // Автофокус на поле ввода при открытии
-    const observer = new MutationObserver(() => {
-        if (box.style.display === "flex") {
-            input.focus();
-        }
-    });
-    observer.observe(box, { attributes: true, attributeFilter: ['style'] });
 })();
