@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import Dict, Any
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +12,7 @@ import re
 from datetime import datetime, timedelta
 import requests
 import threading
-import asyncio
+import time
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -82,93 +83,42 @@ RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 # Хранилище сессий пользователей
 user_sessions = {}
 
-# ====== ФУНКЦИИ ДЛЯ ПОДДЕРЖАНИЯ АКТИВНОСТИ ======
+# ====== УПРОЩЕННАЯ ФУНКЦИЯ ДЛЯ ПОДДЕРЖАНИЯ АКТИВНОСТИ ======
 
-async def keep_alive_ping():
-    """Периодически пингуем сервер, чтобы не засыпал на Render."""
-    if not RENDER_EXTERNAL_URL:
+def ping_endpoint():
+    """Простая функция для пинга эндпоинтов."""
+    if not RENDER_EXTERNAL_URL or not RENDER_EXTERNAL_URL.startswith("http"):
         return
+    
+    try:
+        # Пингуем разные эндпоинты
+        endpoints = ["/health", "/", "/ping"]
         
+        for endpoint in endpoints:
+            try:
+                url = f"{RENDER_EXTERNAL_URL.rstrip('/')}{endpoint}"
+                response = requests.get(url, timeout=5)
+                print(f"🔔 Keep-alive ping {endpoint}: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                print(f"⚠️ Keep-alive ping failed: {e}")
+            except Exception as e:
+                print(f"⚠️ Keep-alive error: {e}")
+    except Exception as e:
+        print(f"❌ Keep-alive function error: {e}")
+
+def start_keep_alive_simple():
+    """Запускаем keep-alive в фоновом потоке (упрощенная версия)."""
+    print("🔔 Starting simplified keep-alive service...")
+    
     while True:
         try:
-            await asyncio.sleep(300)
-            
-            base_url = RENDER_EXTERNAL_URL
-            endpoints_to_ping = ["/health", "/", "/ping"]
-            
-            for endpoint in endpoints_to_ping:
-                try:
-                    url = f"{base_url}{endpoint}"
-                    response = requests.get(url, timeout=10)
-                    print(f"🔔 Keep-alive ping: {response.status_code}")
-                except:
-                    pass
-                    
+            time.sleep(180)  # Пингуем каждые 3 минуты (180 секунд)
+            ping_endpoint()
         except Exception as e:
-            print(f"❌ Keep-alive error: {e}")
-            await asyncio.sleep(60)
+            print(f"❌ Keep-alive thread error: {e}")
+            time.sleep(60)
 
-def start_keep_alive():
-    """Запускаем keep-alive в фоновом потоке."""
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(keep_alive_ping())
-    except:
-        pass
-
-# Запускаем keep-alive при старте приложения
-@app.on_event("startup")
-async def startup_event():
-    """Запускается при старте приложения."""
-    print("\n" + "="*60)
-    print("🏥 GLADIS Chatbot API запущен")
-    print("="*60)
-    
-    print(f"🤖 AI сервис: {'✅ Replicate' if REPLICATE_API_TOKEN else '❌ Не настроен'}")
-    print(f"📱 Telegram: {'✅ Настроен' if TELEGRAM_BOT_TOKEN else '⚠️ Только логи'}")
-    print(f"💬 Канал: {TELEGRAM_CHAT_ID}")
-    
-    if RENDER_EXTERNAL_URL and RENDER_EXTERNAL_URL.startswith("http"):
-        print("🔔 Starting keep-alive service...")
-        threading.Thread(target=start_keep_alive, daemon=True).start()
-    
-    print("✅ Приложение готово к работе")
-    print("="*60 + "\n")
-
-def cleanup_old_sessions():
-    """Очистка старых сессий."""
-    now = datetime.now()
-    to_delete = []
-    
-    for session_id, session_data in user_sessions.items():
-        session_age = now - session_data['created_at']
-        
-        # Если сессии больше 10 минут И есть контакт И еще не отправлено
-        if (session_age > timedelta(minutes=10) and 
-            not session_data.get('telegram_sent', False) and 
-            session_data.get('phone') and 
-            session_data.get('name')):
-            
-            print(f"⏰ ТАЙМАУТ 10 минут: отправляем неполную заявку")
-            
-            full_text = "\n".join(session_data.get('text_parts', []))
-            send_incomplete_to_telegram(
-                full_text, 
-                session_data.get('name'),
-                session_data.get('phone'),
-                session_data.get('procedure_type')
-            )
-            session_data['telegram_sent'] = True
-            session_data['incomplete_sent'] = True
-        
-        # Удаляем очень старые сессии (больше 2 часов)
-        if session_age > timedelta(hours=2):
-            to_delete.append(session_id)
-    
-    for session_id in to_delete:
-        del user_sessions[session_id]
-
+# Функция для проверки простого приветствия
 def is_simple_greeting(message: str) -> bool:
     """Проверяет, является ли сообщение простым приветствием."""
     message_lower = message.lower()
@@ -191,6 +141,7 @@ def is_simple_greeting(message: str) -> bool:
     
     return False
 
+# Функция для проверки, нужно ли переходить к контактам
 def should_move_to_contacts(message: str, session: Dict[str, Any]) -> bool:
     """
     Определяет, пора ли переходить к сбору контактов.
@@ -239,6 +190,39 @@ def should_move_to_contacts(message: str, session: Dict[str, Any]) -> bool:
         return True
     
     return False
+
+def cleanup_old_sessions():
+    """Очистка старых сессий."""
+    now = datetime.now()
+    to_delete = []
+    
+    for session_id, session_data in user_sessions.items():
+        session_age = now - session_data['created_at']
+        
+        # Если сессии больше 10 минут И есть контакт И еще не отправлено
+        if (session_age > timedelta(minutes=10) and 
+            not session_data.get('telegram_sent', False) and 
+            session_data.get('phone') and 
+            session_data.get('name')):
+            
+            print(f"⏰ ТАЙМАУТ 10 минут: отправляем неполную заявку")
+            
+            full_text = "\n".join(session_data.get('text_parts', []))
+            send_incomplete_to_telegram(
+                full_text, 
+                session_data.get('name'),
+                session_data.get('phone'),
+                session_data.get('procedure_type')
+            )
+            session_data['telegram_sent'] = True
+            session_data['incomplete_sent'] = True
+        
+        # Удаляем очень старые сессии (больше 2 часов)
+        if session_age > timedelta(hours=2):
+            to_delete.append(session_id)
+    
+    for session_id in to_delete:
+        del user_sessions[session_id]
 
 @app.post("/chat")
 async def chat_endpoint(request: Request):
@@ -560,3 +544,24 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content="Internal Server Error"
     )
+
+# Запускаем keep-alive при старте приложения
+@app.on_event("startup")
+async def startup_event():
+    """Запускается при старте приложения."""
+    print("\n" + "="*60)
+    print("🏥 GLADIS Chatbot API запущен")
+    print("="*60)
+    
+    print(f"🤖 AI сервис: {'✅ Replicate' if REPLICATE_API_TOKEN else '❌ Не настроен'}")
+    print(f"📱 Telegram: {'✅ Настроен' if TELEGRAM_BOT_TOKEN else '⚠️ Только логи'}")
+    print(f"💬 Канал: {TELEGRAM_CHAT_ID}")
+    
+    if RENDER_EXTERNAL_URL and RENDER_EXTERNAL_URL.startswith("http"):
+        print("🔔 Starting keep-alive service...")
+        # Запускаем keep-alive в отдельном потоке
+        keep_alive_thread = threading.Thread(target=start_keep_alive_simple, daemon=True)
+        keep_alive_thread.start()
+    
+    print("✅ Приложение готово к работе")
+    print("="*60 + "\n")
