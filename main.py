@@ -3,9 +3,9 @@ import sys
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from chatbot_logic import generate_bot_reply, check_interesting_application, extract_name_with_ai
+from chatbot_logic import generate_bot_reply, extract_name_with_ai
 from telegram_utils import send_to_telegram, send_incomplete_to_telegram, send_complete_application_to_telegram
-from dialog_logic import analyze_client_needs_simple, handle_contact_collection, should_move_to_contacts
+from dialog_logic import analyze_client_needs_simple, handle_contact_collection
 from dotenv import load_dotenv
 import re
 from datetime import datetime, timedelta
@@ -169,6 +169,77 @@ def cleanup_old_sessions():
     for session_id in to_delete:
         del user_sessions[session_id]
 
+def is_simple_greeting(message: str) -> bool:
+    """Проверяет, является ли сообщение простым приветствием."""
+    message_lower = message.lower()
+    
+    greetings = [
+        "добрый день", "добрый вечер", "доброе утро",
+        "здравствуйте", "привет", "здрасьте", "приветствую",
+        "доброго времени суток", "доброй ночи"
+    ]
+    
+    # Проверяем точные совпадения
+    for greeting in greetings:
+        if greeting in message_lower:
+            # Дополнительно проверяем, что это действительно только приветствие
+            words = message_lower.split()
+            if len(words) <= 3:  # "добрый день" - 2 слова
+                return True
+            elif all(word in greetings + ["", " "] for word in words[:3]):
+                return True
+    
+    return False
+
+def should_move_to_contacts(message: str, session: Dict[str, Any]) -> bool:
+    """
+    Определяет, пора ли переходить к сбору контактов.
+    """
+    message_lower = message.lower()
+    
+    # Ключевые слова, указывающие на готовность записаться
+    ready_keywords = [
+        "хочу записаться", "запишите", "можно записаться", 
+        "готов записаться", "давайте запишем", "хочу на процедуру",
+        "интересует запись", "хочу сделать", "запишите меня",
+        "давайте", "согласен", "ок", "хорошо", "идемте", "хотел записаться"
+    ]
+    
+    # Если клиент явно говорит о записи
+    if any(keyword in message_lower for keyword in ready_keywords):
+        return True
+    
+    # Если клиент дает контакты
+    contact_patterns = [
+        r'\d{10,11}',
+        r'[\+7]?[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2,3}',
+        r'меня\s+зовут',
+        r'имя\s+',
+        r'телефон'
+    ]
+    
+    for pattern in contact_patterns:
+        if re.search(pattern, message_lower):
+            return True
+    
+    # Если клиент спрашивает о конкретной процедуре и хочет записаться
+    procedure_keywords = [
+        "трихолакс", "эпиляция", "ботокс", "чистка", "пилинг",
+        "лифтинг", "мезотерапия", "биоревитализация"
+    ]
+    
+    has_procedure = any(keyword in message_lower for keyword in procedure_keywords)
+    wants_to_register = "запис" in message_lower
+    
+    if has_procedure and wants_to_register:
+        return True
+    
+    # Если уже было много сообщений в диалоге
+    if session.get('message_count', 0) >= 5:
+        return True
+    
+    return False
+
 @app.post("/chat")
 async def chat_endpoint(request: Request):
     """Основной endpoint для общения с ботом."""
@@ -295,35 +366,54 @@ async def chat_endpoint(request: Request):
     
     # ===== ОСНОВНАЯ AI-ЛОГИКА =====
     
+    bot_reply = ""
+    
     # Если доступен AI - используем его как основной движок
     if REPLICATE_API_TOKEN:
         print("🤖 Генерация ответа через AI...")
-        bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
         
-        # Определяем этап на основе ответа AI
-        reply_lower = bot_reply.lower()
-        
-        # Если AI запросил контакты - переходим к сбору
-        contact_phrases = [
-            "ваше имя", "ваш телефон", "для записи мне нужно",
-            "назовите ваше имя", "укажите телефон", "как вас зовут",
-            "мне нужно ваше имя", "ваше имя и телефон"
-        ]
-        
-        if any(phrase in reply_lower for phrase in contact_phrases):
-            if session['stage'] != 'contact_collection':
-                session['stage'] = 'contact_collection'
-                print("📝 Переход к сбору контактов (по запросу AI)")
-        
-        # Если это первое сообщение - переходим в консультацию
-        elif session['stage'] == 'needs_analysis':
-            session['stage'] = 'consultation'
-            print("💬 Переход к консультации")
+        # Проверяем, не нужно ли сразу перейти к сбору контактов
+        if should_move_to_contacts(user_message, session):
+            session['stage'] = 'contact_collection'
+            print("📝 Прямой переход к сбору контактов")
             
-        # Сохраняем ответы на вопросы если это не приветствие
-        is_greeting_reply = "чем могу вам помочь" in reply_lower
-        if not is_greeting_reply and "questions_answered" in session:
-            session['questions_answered'].append(user_message)
+            # Формируем ответ для сбора контактов
+            if session['name'] and session['phone']:
+                bot_reply = "Спасибо! Сейчас передам всю информацию администратору."
+            elif session['name']:
+                bot_reply = f"Спасибо, {session['name']}! Теперь укажите ваш телефон для связи."
+            elif session['phone']:
+                bot_reply = f"Спасибо! Вижу ваш телефон {session['phone']}. Как вас зовут?"
+            else:
+                bot_reply = "Для записи мне нужно ваше имя и телефон для связи. Укажите их, пожалуйста."
+        else:
+            # Используем AI для генерации ответа
+            bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
+            
+            # Определяем этап на основе ответа AI
+            reply_lower = bot_reply.lower()
+            
+            # Если AI запросил контакты - переходим к сбору
+            contact_phrases = [
+                "ваше имя", "ваш телефон", "для записи мне нужно",
+                "назовите ваше имя", "укажите телефон", "как вас зовут",
+                "мне нужно ваше имя", "ваше имя и телефон"
+            ]
+            
+            if any(phrase in reply_lower for phrase in contact_phrases):
+                if session['stage'] != 'contact_collection':
+                    session['stage'] = 'contact_collection'
+                    print("📝 Переход к сбору контактов (по запросу AI)")
+            
+            # Если это первое сообщение - переходим в консультацию
+            elif session['stage'] == 'needs_analysis':
+                session['stage'] = 'consultation'
+                print("💬 Переход к консультации")
+                
+            # Сохраняем ответы на вопросы если это не приветствие
+            is_greeting_reply = "чем могу вам помочь" in reply_lower and "8-928" not in bot_reply
+            if not is_greeting_reply and "questions_answered" in session:
+                session['questions_answered'].append(user_message)
     
     # Если AI недоступен - используем упрощенную логику
     else:
