@@ -1,3 +1,6 @@
+from typing import Dict, Any
+from datetime import datetime
+
 def send_complete_application_to_telegram(session: Dict[str, Any], full_conversation: str):
     """
     Отправляет полную фабулу диалога в Telegram.
