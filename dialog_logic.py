@@ -11,6 +11,17 @@ def analyze_client_needs(message: str, session: Dict[str, Any]) -> str:
     """
     message_lower = message.lower()
     
+    # Приветственные фразы
+    greetings = [
+        "добрый день", "добрый вечер", "доброе утро",
+        "здравствуйте", "привет", "доброго времени суток",
+        "здрасьте", "приветствую"
+    ]
+    
+    # Если это просто приветствие
+    if any(greeting in message_lower for greeting in greetings):
+        return "Здравствуйте! Клиника GLADIS, меня зовут Александра.\n\nЧем могу вам помочь?"
+    
     # Только ОЧЕНЬ очевидные случаи обрабатываем здесь
     obvious_keywords = {
         "эпиляция": "Лазерная эпиляция",
@@ -38,7 +49,6 @@ def analyze_client_needs(message: str, session: Dict[str, Any]) -> str:
                 return response
     
     # Если не нашли очевидного - возвращаем приглашение к диалогу
-    # AI сам разберется в следующем сообщении
     response = "Здравствуйте! Клиника GLADIS, меня зовут Александра.\n\n"
     response += "Чем могу вам помочь? Расскажите, что вас интересует, или задайте вопрос."
     
