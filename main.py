@@ -156,7 +156,7 @@ def cleanup_old_sessions():
                 full_text, 
                 session_data.get('name'),
                 session_data.get('phone'),
-                session_data.get('email')
+                session_data.get('procedure')
             )
             session_data['telegram_sent'] = True
             session_data['incomplete_sent'] = True
@@ -196,7 +196,6 @@ async def chat_endpoint(request: Request):
                 'created_at': datetime.now(),
                 'name': None,
                 'phone': None,
-                'email': None,
                 'procedure': None,
                 'text_parts': [],
                 'telegram_sent': False,
@@ -208,20 +207,17 @@ async def chat_endpoint(request: Request):
         session = user_sessions[user_ip]
         session['text_parts'].append(user_message)
         session['message_count'] += 1
-        full_text = "\n".join(session['text_parts'])
         
-        # Ищем контакты в сообщении
+        # Ищем телефон в сообщении
         phone_pattern = r'[\+7]?[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}'
         phone_matches = re.findall(phone_pattern, user_message)
         
-        email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-        email_matches = re.findall(email_pattern, user_message)
-        
         # Ищем имя
         name_patterns = [
-            r'меня\s+зовут\s+([А-ЯЁ][а-яё]+)',
-            r'имя\s+([А-ЯЁ][а-яё]+)',
-            r'([А-ЯЁ][а-яё]+)\s+(?:это|мое имя)'
+            r'меня\s+зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',  # "меня зовут Иван" или "Иван Петров"
+            r'имя\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',  # "имя Анна"
+            r'([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)\s+(?:это|мое имя)',  # "Анна это мое имя"
+            r'зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',  # "зовут Мария"
         ]
         
         found_name = None
@@ -235,10 +231,6 @@ async def chat_endpoint(request: Request):
         if phone_matches and not session['phone']:
             session['phone'] = phone_matches[0]
             print(f"📞 Найден телефон: {session['phone']}")
-        
-        if email_matches and not session['email']:
-            session['email'] = email_matches[0]
-            print(f"📧 Найден email: {session['email']}")
         
         if found_name and not session['name']:
             session['name'] = found_name
@@ -286,11 +278,11 @@ async def chat_endpoint(request: Request):
         # Случай 2: Есть имя и телефон - отправляем ПОЛНУЮ заявку
         elif session['name'] and session['phone']:
             print(f"📨 ОТПРАВЛЯЕМ ПОЛНУЮ ЗАЯВКУ")
+            full_text = "\n".join(session['text_parts'])
             success = send_to_telegram(
                 full_text, 
                 session['name'], 
                 session['phone'],
-                session.get('email'),
                 session.get('procedure')
             )
             if success:
