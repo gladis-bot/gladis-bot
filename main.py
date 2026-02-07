@@ -3,7 +3,7 @@ import sys
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from chatbot_logic import generate_bot_reply, check_interesting_application
+from chatbot_logic import generate_bot_reply, check_interesting_application, extract_name_with_ai
 from telegram_utils import send_to_telegram, send_incomplete_to_telegram, send_complete_application_to_telegram
 from dialog_logic import analyze_client_needs, clarify_procedure_details, handle_contact_collection, should_move_to_contacts
 from dotenv import load_dotenv
@@ -211,47 +211,85 @@ async def chat_endpoint(request: Request):
     session['text_parts'].append(user_message)
     session['message_count'] += 1
     
-    # Ищем контакты в сообщении (улучшенные паттерны)
-    phone_pattern = r'[\+7]?[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2,3}'
-    phone_matches = re.findall(phone_pattern, user_message)
-    
-    # Также ищем просто 11 цифр подряд
-    if not phone_matches:
-        phone_pattern2 = r'\b\d{10,11}\b'
-        phone_matches = re.findall(phone_pattern2, user_message)
-    
-    # Улучшенные паттерны для имени
-    name_patterns = [
-        r'меня\s+зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
-        r'имя\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
-        r'зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
-        r'^([А-ЯЁ][а-яё]+)[,\s]',  # Имя в начале сообщения с запятой или пробелом
-        r'([А-ЯЁ][а-яё]+)\s+(?:это|мое имя|меня)',  # "Вадим это", "Вадим мое имя"
+    # ===== УЛУЧШЕННОЕ РАСПОЗНАВАНИЕ ТЕЛЕФОНА =====
+    phone_patterns = [
+        r'\b8[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
+        r'\b\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
+        r'\b7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
+        r'\b\(\d{3}\)[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
+        r'\b\d{3}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
+        r'\b\d{4}[\s\-]?\d{3}[\s\-]?\d{4}\b',
+        r'\b\d{11}\b',
+        r'\b\d{10}\b',
     ]
     
-    found_name = None
-    for pattern in name_patterns:
-        match = re.search(pattern, user_message, re.IGNORECASE)
-        if match:
-            found_name = match.group(1)
-            # Удаляем возможные цифры после имени
-            found_name = re.sub(r'\d+$', '', found_name).strip()
+    phone_matches = []
+    for pattern in phone_patterns:
+        matches = re.findall(pattern, user_message)
+        if matches:
+            phone_matches.extend(matches)
             break
     
-    # Если не нашли по паттернам, ищем русские слова с заглавной буквы
-    if not found_name:
-        words = re.findall(r'[А-ЯЁа-яё]+', user_message)
-        russian_words = [word for word in words if re.match(r'^[А-ЯЁ][а-яё]*$', word)]
-        if russian_words:
-            found_name = russian_words[0]
-    
-    # Обновляем контакты если найдены
+    # Обработка телефона
     if phone_matches and not session['phone']:
-        clean_phone = re.sub(r'\D', '', phone_matches[0])
+        raw_phone = phone_matches[0]
+        clean_phone = re.sub(r'\D', '', raw_phone)
+        
+        # Нормализуем номер
+        if len(clean_phone) == 10:
+            clean_phone = '7' + clean_phone
+        elif len(clean_phone) == 11 and clean_phone.startswith('8'):
+            clean_phone = '7' + clean_phone[1:]
+        
         if 10 <= len(clean_phone) <= 11:
             session['phone'] = clean_phone
-            print(f"📞 Найден телефон: {session['phone']}")
+            print(f"📞 Найден телефон: {raw_phone} → {session['phone']}")
     
+    # ===== РАСПОЗНАВАНИЕ ИМЕНИ С ИСПОЛЬЗОВАНИЕМ AI =====
+    found_name = None
+    
+    # 1. Сначала пробуем стандартные паттерны
+    name_patterns = [
+        r'(?:меня\s+зовут|имя|зовут|мое\s+имя)[\s:]+([а-яё\-]+\s*[а-яё\-]*)',
+        r'([а-яё\-]+)[\s,]*\+?\d',
+        r'([а-яё\-]+)[\s,]*(?:телефон|тел\.?|мобильный|номер)',
+        r'^([а-яё\-]+)[,\s]',
+        r'([а-яё\-]+)\s+(?:это|мое имя|меня|здесь|я)',
+        r'я\s+([а-яё\-]+)',
+    ]
+    
+    for pattern in name_patterns:
+        match = re.search(pattern, user_message.lower())
+        if match:
+            found_name = match.group(1).strip()
+            found_name = re.sub(r'[\d\+]', '', found_name).strip()
+            if found_name and len(found_name) >= 2:
+                if '-' in found_name:
+                    parts = found_name.split('-')
+                    found_name = '-'.join([part.capitalize() for part in parts])
+                else:
+                    found_name = found_name.capitalize()
+                break
+    
+    # 2. Если не нашли по паттернам, используем AI (если есть токен)
+    if not found_name and REPLICATE_API_TOKEN:
+        print(f"🔍 Использую AI для поиска имени в: '{user_message}'")
+        found_name = extract_name_with_ai(REPLICATE_API_TOKEN, user_message)
+        if found_name:
+            print(f"✅ AI нашел имя: {found_name}")
+    
+    # 3. Если AI не нашел или нет токена, пробуем простую логику
+    if not found_name:
+        words = re.findall(r'[а-яё\-]+', user_message.lower())
+        if words and len(words[0]) >= 2:
+            candidate = words[0]
+            # Исключаем стоп-слова
+            stop_words = {'добрый', 'день', 'вечер', 'утро', 'здравствуйте', 
+                         'привет', 'хочу', 'записаться', 'на', 'процедуру', 'по'}
+            if candidate not in stop_words:
+                found_name = candidate.capitalize()
+    
+    # Сохраняем найденное имя
     if found_name and not session['name']:
         session['name'] = found_name
         print(f"👤 Найдено имя: {session['name']}")
@@ -264,25 +302,20 @@ async def chat_endpoint(request: Request):
         
         # Проверяем, переходим ли к следующему этапу
         if session.get('procedure_category'):
-            # Если нашли процедуру - переходим к уточнению
             session['stage'] = 'details_clarification'
         elif should_move_to_contacts(user_message, session):
-            # Если клиент сразу хочет записаться или дает контакты
             session['stage'] = 'contact_collection'
-            # НЕ добавляем повторно запрос контактов, если уже в ответе есть
             if "ваше имя и телефон" not in bot_reply:
                 bot_reply += "\n\nДля записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
     
-    # Этап 2: Консультация через AI (ТОЛЬКО для сложных вопросов)
+    # Этап 2: Консультация через AI
     elif session['stage'] == 'consultation' and REPLICATE_API_TOKEN:
         bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
         
-        # Сохраняем ответы на вопросы
         if 'questions_answered' not in session:
             session['questions_answered'] = []
         session['questions_answered'].append(user_message)
         
-        # Проверяем, не пора ли переходить к контактам
         if should_move_to_contacts(user_message, session):
             session['stage'] = 'contact_collection'
             if "ваше имя и телефон" not in bot_reply:
@@ -292,7 +325,6 @@ async def chat_endpoint(request: Request):
     elif session['stage'] == 'details_clarification':
         bot_reply = clarify_procedure_details(user_message, session)
         
-        # Если функция вернула, что нужно перейти к контактам
         if "Для записи мне нужно" in bot_reply or "ваше имя и телефон" in bot_reply:
             session['stage'] = 'contact_collection'
     
@@ -300,7 +332,6 @@ async def chat_endpoint(request: Request):
     elif session['stage'] == 'contact_collection':
         bot_reply = handle_contact_collection(user_message, session)
         
-        # Если собрали все контакты - отправляем в Telegram
         if session['name'] and session['phone']:
             print(f"📨 ОТПРАВЛЯЕМ ПОЛНУЮ ФАБУЛУ В TELEGRAM")
             full_text = "\n".join(session['text_parts'])
@@ -314,7 +345,7 @@ async def chat_endpoint(request: Request):
     elif session['stage'] == 'completed':
         bot_reply = "Ваша заявка уже передана администратору. С вами свяжутся для подтверждения записи. 📞 Телефон: 8-928-458-32-88"
     
-    # Резервный вариант: AI для нераспознанных сообщений
+    # Резервный вариант
     else:
         if REPLICATE_API_TOKEN:
             bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
