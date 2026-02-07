@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from chatbot_logic import generate_bot_reply, check_interesting_application, extract_name_with_ai
 from telegram_utils import send_to_telegram, send_incomplete_to_telegram, send_complete_application_to_telegram
-from dialog_logic import analyze_client_needs, clarify_procedure_details, handle_contact_collection, should_move_to_contacts
+from dialog_logic import analyze_client_needs_simple, handle_contact_collection, should_move_to_contacts
 from dotenv import load_dotenv
 import re
 from datetime import datetime, timedelta
@@ -331,7 +331,6 @@ async def chat_endpoint(request: Request):
         
         if session['stage'] == 'needs_analysis':
             # Используем простую логику для первого сообщения
-            from dialog_logic import analyze_client_needs_simple
             bot_reply = analyze_client_needs_simple(user_message, session)
             session['stage'] = 'consultation'
             
