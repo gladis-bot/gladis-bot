@@ -189,22 +189,22 @@ async def chat_endpoint(request: Request):
             'created_at': datetime.now(),
             'name': None,
             'phone': None,
-            'procedure_category': None,      # Категория (эпиляция, чистка и т.д.)
-            'procedure_type': None,          # Конкретный тип (карбоновый пилинг и т.д.)
-            'zone': None,                    # Зона (лицо, ноги и т.д.)
-            'laser_type': None,              # Тип лазера (гибридный/александритовый)
-            'location': None,                # Сочи или Адлер
-            'skin_type': None,               # Тип кожи
-            'skin_problems': [],             # Проблемы кожи
-            'zones': [],                     # Зоны для процедуры
-            'preferences': [],               # Предпочтения клиента
-            'questions_answered': [],        # Ответы на вопросы
-            'stage': 'needs_analysis',       # Текущий этап диалога
+            'procedure_category': None,
+            'procedure_type': None,
+            'zone': None,
+            'laser_type': None,
+            'location': None,
+            'skin_type': None,
+            'skin_problems': [],
+            'zones': [],
+            'preferences': [],
+            'questions_answered': [],
+            'stage': 'needs_analysis',
             'text_parts': [],
             'telegram_sent': False,
             'incomplete_sent': False,
             'message_count': 0,
-            'consultation_complete': False   # Консультация завершена
+            'consultation_complete': False
         }
     
     session = user_sessions[user_ip]
@@ -283,7 +283,6 @@ async def chat_endpoint(request: Request):
         words = re.findall(r'[а-яё\-]+', user_message.lower())
         if words and len(words[0]) >= 2:
             candidate = words[0]
-            # Исключаем стоп-слова
             stop_words = {'добрый', 'день', 'вечер', 'утро', 'здравствуйте', 
                          'привет', 'хочу', 'записаться', 'на', 'процедуру', 'по'}
             if candidate not in stop_words:
@@ -294,118 +293,78 @@ async def chat_endpoint(request: Request):
         session['name'] = found_name
         print(f"👤 Найдено имя: {session['name']}")
     
-    # ===== УМНАЯ ЛОГИКА ЭТАПОВ С ИСПОЛЬЗОВАНИЕМ AI =====
+    # ===== ОСНОВНАЯ AI-ЛОГИКА =====
     
-    # Этап 1: Анализ потребностей
-    if session['stage'] == 'needs_analysis':
-        # Сначала проверяем, хочет ли клиент сразу записаться
-        message_lower = user_message.lower()
-        wants_to_register = any(word in message_lower for word in [
-            "хочу записаться", "запишите", "можно записаться", "готов записаться",
-            "давайте запишем", "хочу на процедуру", "запишите меня", "хотел записаться"
-        ])
-        
-        # Если клиент явно хочет записаться и уже дал контакты
-        if wants_to_register and (session.get('phone') or session.get('name')):
-            session['stage'] = 'contact_collection'
-            if session.get('name') and session.get('phone'):
-                bot_reply = "Спасибо! Сейчас передам всю информацию администратору."
-            elif session.get('name'):
-                bot_reply = f"Спасибо, {session['name']}! Теперь укажите ваш телефон для связи."
-            elif session.get('phone'):
-                bot_reply = f"Спасибо! Вижу ваш телефон {session['phone']}. Как вас зовут?"
-            else:
-                bot_reply = "Для записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
-        
-        # Если клиент хочет записаться, но не на конкретную процедуру
-        elif wants_to_register:
-            # Используем AI для понимания что хочет клиент
-            if REPLICATE_API_TOKEN:
-                print("🤖 Клиент хочет записаться - использую AI")
-                bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
-                session['stage'] = 'consultation'
-            else:
-                bot_reply = analyze_client_needs(user_message, session)
-        
-        # Если это общий вопрос или вопрос о процедуре
-        else:
-            # Сначала пробуем простой анализ
-            bot_reply = analyze_client_needs(user_message, session)
-            
-            # Если простой анализ не понял (вернул общий ответ)
-            # И есть AI токен - используем AI сразу
-            if ("Расскажите подробнее" in bot_reply or 
-                "Чем могу вам помочь" in bot_reply) and REPLICATE_API_TOKEN:
-                
-                print("🤖 Простой анализ не понял - использую AI...")
-                ai_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
-                
-                # Проверяем, не собирает ли AI контакты
-                if "ваше имя и телефон" in ai_reply or "Для записи" in ai_reply:
-                    session['stage'] = 'contact_collection'
-                else:
-                    session['stage'] = 'consultation'
-                
-                # Берем AI ответ если он хороший
-                if "Извините" not in ai_reply and "техническая ошибка" not in ai_reply:
-                    bot_reply = ai_reply
-    
-    # Этап 2: Консультация через AI (для любых сложных вопросов)
-    elif session['stage'] == 'consultation' and REPLICATE_API_TOKEN:
+    # Если доступен AI - используем его как основной движок
+    if REPLICATE_API_TOKEN:
+        print("🤖 Генерация ответа через AI...")
         bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
         
-        # Сохраняем ответы на вопросы
-        if 'questions_answered' not in session:
-            session['questions_answered'] = []
-        session['questions_answered'].append(user_message)
+        # Определяем этап на основе ответа AI
+        reply_lower = bot_reply.lower()
         
-        # Проверяем, не пора ли переходить к контактам
-        if should_move_to_contacts(user_message, session):
-            session['stage'] = 'contact_collection'
-            # Проверяем, не добавил ли уже AI запрос контактов
-            if "ваше имя и телефон" not in bot_reply and "Для записи" not in bot_reply:
-                bot_reply += "\n\nДля записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
+        # Если AI запросил контакты - переходим к сбору
+        contact_phrases = [
+            "ваше имя", "ваш телефон", "для записи мне нужно",
+            "назовите ваше имя", "укажите телефон", "как вас зовут",
+            "мне нужно ваше имя", "ваше имя и телефон"
+        ]
+        
+        if any(phrase in reply_lower for phrase in contact_phrases):
+            if session['stage'] != 'contact_collection':
+                session['stage'] = 'contact_collection'
+                print("📝 Переход к сбору контактов (по запросу AI)")
+        
+        # Если это первое сообщение - переходим в консультацию
+        elif session['stage'] == 'needs_analysis':
+            session['stage'] = 'consultation'
+            print("💬 Переход к консультации")
+            
+        # Сохраняем ответы на вопросы если это не приветствие
+        is_greeting_reply = "чем могу вам помочь" in reply_lower
+        if not is_greeting_reply and "questions_answered" in session:
+            session['questions_answered'].append(user_message)
     
-    # Этап 3: Уточнение деталей процедуры (только для простых случаев)
-    elif session['stage'] == 'details_clarification':
-        bot_reply = clarify_procedure_details(user_message, session)
+    # Если AI недоступен - используем упрощенную логику
+    else:
+        print("⚠️ AI недоступен, использую упрощенную логику")
         
-        # Если функция вернула, что нужно перейти к контактам
-        if "Для записи мне нужно" in bot_reply or "ваше имя и телефон" in bot_reply:
-            session['stage'] = 'contact_collection'
+        if session['stage'] == 'needs_analysis':
+            # Используем простую логику для первого сообщения
+            from dialog_logic import analyze_client_needs_simple
+            bot_reply = analyze_client_needs_simple(user_message, session)
+            session['stage'] = 'consultation'
+            
+        elif session['stage'] == 'consultation':
+            # Для сложных вопросов без AI
+            bot_reply = "Извините, сервис временно недоступен. Пожалуйста, позвоните по телефону 8-928-458-32-88"
+            
+        elif session['stage'] == 'contact_collection':
+            # Сбор контактов без AI
+            bot_reply = handle_contact_collection(user_message, session)
+            
+        else:
+            bot_reply = "Извините, возникла ошибка. Пожалуйста, позвоните нам."
     
-    # Этап 4: Сбор контактов
-    elif session['stage'] == 'contact_collection':
-        # Сначала обрабатываем сбор контактов
-        bot_reply = handle_contact_collection(user_message, session)
-        
-        # Если собрали все контакты - отправляем в Telegram
-        if session['name'] and session['phone']:
-            print(f"📨 ОТПРАВЛЯЕМ ПОЛНУЮ ФАБУЛУ В TELEGRAM")
-            full_text = "\n".join(session['text_parts'])
-            success = send_complete_application_to_telegram(session, full_text)
-            if success:
-                session['telegram_sent'] = True
-                session['stage'] = 'completed'
-                bot_reply += "\n\n✅ Спасибо! Вся информация передана администратору. С вами свяжутся для подтверждения записи."
+    # ===== ОБРАБОТКА СОБРАННЫХ КОНТАКТОВ =====
+    
+    # Если собрали все контакты - отправляем в Telegram
+    if session['stage'] == 'contact_collection' and session['name'] and session['phone']:
+        print(f"📨 ОТПРАВЛЯЕМ ПОЛНУЮ ФАБУЛУ В TELEGRAM")
+        full_text = "\n".join(session['text_parts'])
+        success = send_complete_application_to_telegram(session, full_text)
+        if success:
+            session['telegram_sent'] = True
+            session['stage'] = 'completed'
+            bot_reply += "\n\n✅ Спасибо! Вся информация передана администратору. С вами свяжутся для подтверждения записи."
     
     # Этап 5: Завершено
     elif session['stage'] == 'completed':
         bot_reply = "Ваша заявка уже передана администратору. С вами свяжутся для подтверждения записи.\n\n📞 Телефон: 8-928-458-32-88\n📍 Адреса:\n   📍 Сочи: ул. Воровского, 22\n   📍 Адлер: ул. Кирова, д. 26а\n⏰ Ежедневно 10:00-20:00"
     
-    # Резервный вариант: AI для нераспознанных сообщений
-    else:
-        if REPLICATE_API_TOKEN:
-            bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
-            # Если AI отвечает - считаем это консультацией
-            session['stage'] = 'consultation'
-        else:
-            bot_reply = "Извините, сервис временно недоступен. Пожалуйста, позвоните по телефону 8-928-458-32-88"
-    
     # Логируем состояние сессии
     print(f"📊 СОСТОЯНИЕ СЕССИИ:")
     print(f"   Этап: {session['stage']}")
-    print(f"   Процедура: {session.get('procedure_category', 'Не выбрана')}")
     print(f"   👤 Имя: {'✅ ' + session['name'] if session['name'] else '❌ Нет'}")
     print(f"   📞 Телефон: {'✅ ' + str(session['phone']) if session['phone'] else '❌ Нет'}")
     print(f"   📨 Отправлено: {'✅' if session.get('telegram_sent') else '❌'}")
