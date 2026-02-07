@@ -382,3 +382,118 @@ def handle_lifting_details(message: str, session: Dict[str, Any]) -> str:
     message_lower = message.lower()
     
     # Определяем зоны
+    zones = ["лицо", "шея", "декольте", "руки", "живот", "бедра"]
+    found_zones = []
+    for zone in zones:
+        if zone in message_lower:
+            found_zones.append(zone)
+    
+    if found_zones:
+        session['zones'] = found_zones
+    
+    questions_answered = len(session.get('questions_answered', []))
+    
+    if questions_answered < 2:
+        next_q = get_next_question(session)
+        return next_q
+    else:
+        session['stage'] = 'contact_collection'
+        
+        summary = "✅ Поняла! Рекомендации:\n\n"
+        
+        if session.get('zones'):
+            summary += f"📍 Зоны: {', '.join(session['zones'])}\n"
+            
+            # Рекомендации по процедурам
+            if "лицо" in session['zones'] or "шея" in session['zones']:
+                summary += "💡 Для лица и шеи идеально подойдет:\n"
+                summary += "   - SMAS-лифтинг от 14000 руб\n"
+                summary += "   - Микроигольчатый RF-лифтинг от 16500 руб\n"
+                summary += "   - Комплекс с экзосомами и ФДТ от 60000 руб\n"
+        
+        summary += "\nДля подбора оптимальной процедуры нужна консультация.\n"
+        summary += "Для записи мне нужно ваше имя и телефон."
+        
+        return summary
+
+def should_move_to_contacts(message: str, session: Dict[str, Any]) -> bool:
+    """
+    Определяет, пора ли переходить к сбору контактов.
+    """
+    message_lower = message.lower()
+    
+    # Ключевые слова, указывающие на готовность записаться
+    ready_keywords = [
+        "хочу записаться", "запишите", "можно записаться", 
+        "готов записаться", "давайте запишем", "хочу на процедуру",
+        "интересует запись", "хочу сделать", "запишите меня",
+        "давайте", "согласен", "ок", "хорошо", "идемте"
+    ]
+    
+    # Если клиент явно говорит о записи
+    if any(keyword in message_lower for keyword in ready_keywords):
+        return True
+    
+    # Если клиент дает контакты
+    contact_patterns = [
+        r'[\+7]?[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}',
+        r'меня\s+зовут',
+        r'имя\s+',
+        r'телефон'
+    ]
+    
+    for pattern in contact_patterns:
+        if re.search(pattern, message_lower):
+            return True
+    
+    # Если уже было много сообщений в диалоге
+    if session.get('message_count', 0) >= 5:
+        return True
+    
+    return False
+
+def handle_contact_collection(message: str, session: Dict[str, Any]) -> str:
+    """
+    Этап 4: Сбор контактов.
+    """
+    message_lower = message.lower()
+    
+    # Проверяем, есть ли в сообщении имя
+    name_patterns = [
+        r'меня\s+зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
+        r'имя\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
+        r'([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)\s+(?:это|мое имя)',
+        r'зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
+    ]
+    
+    found_name = None
+    for pattern in name_patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            found_name = match.group(1)
+            break
+    
+    # Проверяем, есть ли в сообщении телефон
+    phone_pattern = r'[\+7]?[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}'
+    phone_matches = re.findall(phone_pattern, message)
+    
+    # Обновляем данные
+    if found_name and not session['name']:
+        session['name'] = found_name
+    
+    if phone_matches and not session['phone']:
+        session['phone'] = phone_matches[0]
+    
+    # Формируем ответ в зависимости от того, что уже есть
+    has_name = bool(session['name'])
+    has_phone = bool(session['phone'])
+    
+    if has_name and has_phone:
+        return "Спасибо! Сейчас передам всю информацию администратору."
+    elif has_name and not has_phone:
+        return f"Спасибо, {session['name']}! Теперь укажите ваш телефон для связи."
+    elif has_phone and not has_name:
+        return f"Спасибо за телефон! Теперь скажите, как вас зовут?"
+    else:
+        # Если ничего нет, просим оба
+        return "Для записи мне нужно ваше имя и телефон для связи. Укажите их, пожалуйста."
