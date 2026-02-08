@@ -4,7 +4,7 @@ from typing import Dict, Any
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from chatbot_logic import generate_bot_reply, extract_name_with_ai, check_interesting_application
+from chatbot_logic import generate_bot_reply, extract_name_with_ai, check_interesting_application, detect_application_intent_with_ai
 from telegram_utils import send_to_telegram, send_incomplete_to_telegram, send_complete_application_to_telegram
 from dotenv import load_dotenv
 import re
@@ -20,7 +20,7 @@ def validate_environment():
     """Проверяем обязательные переменные окружения."""
     print("🔍 Проверка переменных окружения...")
     
-    required_vars = ["REPLICATE_API_TOKEN"]
+    required_vars = ["REPLICATE_API_TOKEN", "TELEGRAM_BOT_TOKEN"]  # Добавили TELEGRAM_BOT_TOKEN
     
     missing = []
     
@@ -36,6 +36,13 @@ def validate_environment():
             else:
                 masked_value = "***"
             print(f"   ✅ {var_name}: {masked_value}")
+    
+    # Проверяем TELEGRAM_CHAT_ID (может быть пустым для тестов)
+    TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+    if not TELEGRAM_CHAT_ID:
+        print(f"   ⚠️ TELEGRAM_CHAT_ID: не настроен (может быть пустым)")
+    else:
+        print(f"   ✅ TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
     
     if missing:
         print(f"\n❌ Отсутствуют обязательные переменные: {missing}")
@@ -133,8 +140,6 @@ def is_contact_collection_request(bot_reply: str) -> bool:
             return True
     
     return False
-
-# ====== УПРОЩЕННАЯ ФУНКЦИЯ ДЛЯ ПОДДЕРЖАНИЯ АКТИВНОСТИ ======
 
 def ping_endpoint():
     """Простая функция для пинга эндпоинтов."""
@@ -280,8 +285,6 @@ async def chat_endpoint(request: Request):
     if REPLICATE_API_TOKEN:
         token_length = len(REPLICATE_API_TOKEN)
         print(f"   Длина токена: {token_length} символов")
-        if token_length > 8:
-            print(f"   Начинается с: {REPLICATE_API_TOKEN[:8]}...")
     
     # Очищаем старые сессии
     cleanup_old_sessions()
@@ -298,39 +301,80 @@ async def chat_endpoint(request: Request):
             'incomplete_sent': False,
             'message_count': 0,
             'contacts_provided': False,
-            'application_detected': False
+            'application_detected': False,
+            'procedure_mentioned': False
         }
     
     session = user_sessions[user_ip]
     session['text_parts'].append(user_message)
     session['message_count'] += 1
     
+    # Проверяем, упоминались ли процедуры в диалоге
+    full_conversation = "\n".join(session['text_parts']).lower()
+    procedure_keywords = ['эпиляция', 'лазер', 'ботокс', 'чистка', 'пилинг', 'бикини', 'подмышки', 
+                         'голени', 'бедра', 'биоревитализация', 'инъекция', 'укол', 'смас', 'морфиус']
+    
+    if any(keyword in full_conversation for keyword in procedure_keywords):
+        session['procedure_mentioned'] = True
+        print(f"🔍 В диалоге упоминались процедуры")
+    
     # Извлекаем контакты из сообщения
     extract_contacts_from_message(user_message, session)
     
-    # ===== ВАЖНО: СНАЧАЛА ОТПРАВЛЯЕМ В TELEGRAM ЕСЛИ НАДО =====
+    # ===== ОТПРАВКА В TELEGRAM С ИСПОЛЬЗОВАНИЕМ AI =====
     
     telegram_was_sent_now = False
     
     # Если есть имя И телефон И еще не отправляли
     if session['name'] and session['phone'] and not session.get('telegram_sent', False):
-        print(f"📨 Найдены контакты, проверяем нужно ли отправлять в Telegram")
+        print(f"🚨 Проверяем отправку в Telegram...")
+        print(f"   👤 Имя: {session['name']}")
+        print(f"   📞 Телефон: {session['phone']}")
+        print(f"   📝 Сообщений: {session['message_count']}")
+        print(f"   🔍 Процедуры упоминались: {session['procedure_mentioned']}")
         
-        # Проверяем, что это заявка (а не просто разговор)
-        full_conversation = "\n".join(session['text_parts'])
-        is_application = check_interesting_application(full_conversation)
+        # СПОСОБ 1: Используем AI для определения намерений
+        should_send = False
         
-        # Также проверяем по ключевым словам в последнем сообщении
+        if REPLICATE_API_TOKEN:
+            try:
+                # Получаем последние сообщения для контекста
+                recent_history = "\n".join(session['text_parts'][-3:]) if len(session['text_parts']) > 3 else "\n".join(session['text_parts'])
+                
+                print(f"🤖 Использую AI для анализа намерений клиента...")
+                should_send = detect_application_intent_with_ai(
+                    REPLICATE_API_TOKEN, 
+                    recent_history, 
+                    user_message
+                )
+                print(f"🤖 AI решение по отправке: {'✅ ОТПРАВИТЬ' if should_send else '❌ НЕ отправлять'}")
+                
+                if should_send:
+                    print(f"🚨 AI определил что это ЗАЯВКА, отправляем в Telegram")
+                else:
+                    print(f"ℹ️ AI определил что это ИНФОРМАЦИОННЫЙ запрос, не отправляем")
+                    
+            except Exception as e:
+                print(f"❌ Ошибка AI при анализе намерений: {str(e)}")
+                # Fallback на простую логику
+                should_send = session['procedure_mentioned'] or len(session['text_parts']) > 2
+        else:
+            # Fallback если AI недоступен
+            should_send = session['procedure_mentioned'] or len(session['text_parts']) > 2
+        
+        # Всегда отправляем если клиент явно хочет записаться (по ключевым словам)
         message_lower = user_message.lower()
-        has_registration_keywords = any(word in message_lower for word in [
-            "запис", "хочу", "нужно", "можно", "процедур", 
-            "макияж", "эпиляция", "ботокс", "чистка", "ботулин",
-            "биоревитализация", "пилинг", "лифтинг", "смас", "массаж",
-            "роликовый", "микротоки", "карбоновый", "ультразвуковой"
+        explicit_intent = any(word in message_lower for word in [
+            'запис', 'хочу', 'нужно', 'можно', 'готов', 'давайте', 'интересует'
         ])
         
-        if is_application or has_registration_keywords:
-            print(f"🚨 Обнаружена заявка, отправляем в Telegram")
+        if explicit_intent:
+            print(f"🔍 Явное намерение записаться обнаружено, отправляем")
+            should_send = True
+        
+        # Отправляем если нужно
+        if should_send:
+            print(f"📨 ОТПРАВКА ЗАЯВКИ В TELEGRAM...")
             success = send_complete_application_to_telegram(session, full_conversation)
             
             if success:
@@ -342,10 +386,10 @@ async def chat_endpoint(request: Request):
             else:
                 print(f"❌ Ошибка отправки в Telegram")
         else:
-            print(f"ℹ️  Просто разговор с контактами, не отправляем в Telegram")
+            print(f"ℹ️  Контакты есть, но нет намерения записаться, не отправляем в Telegram")
             session['contacts_provided'] = True
     
-    # ===== ТЕПЕРЬ ГЕНЕРИРУЕМ ОТВЕТ =====
+    # ===== ГЕНЕРАЦИЯ ОТВЕТА БОТА =====
     
     bot_reply = ""
     
@@ -355,7 +399,6 @@ async def chat_endpoint(request: Request):
     # Если заявка ТОЛЬКО ЧТО отправлена в Telegram
     if telegram_was_sent_now:
         print(f"🤖 Заявка отправлена, генерирую подтверждающий ответ")
-        # Создаем персонализированный ответ с именем клиента
         if session.get('name'):
             bot_reply = f"✅ Спасибо, {session['name']}! Ваша заявка передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон клиники: 8-928-458-32-88"
         else:
@@ -411,6 +454,7 @@ async def chat_endpoint(request: Request):
     print(f"   📨 Отправлено в Telegram: {'✅' if session.get('telegram_sent') else '❌'}")
     print(f"   📝 Сообщений: {session['message_count']}")
     print(f"   🔍 Контакты получены: {'✅' if session.get('contacts_provided') else '❌'}")
+    print(f"   💉 Процедуры упоминались: {'✅' if session.get('procedure_mentioned') else '❌'}")
     
     print(f"🤖 Ответ бота: '{bot_reply[:100]}...'" if len(bot_reply) > 100 else f"🤖 Ответ бота: '{bot_reply}'")
     print("="*40)
@@ -426,7 +470,8 @@ async def health_check(request: Request):
     services_status = {
         "replicate_api": bool(REPLICATE_API_TOKEN),
         "telegram_bot": bool(TELEGRAM_BOT_TOKEN),
-        "telegram_chat": TELEGRAM_CHAT_ID if TELEGRAM_CHAT_ID else "не настроен"
+        "telegram_chat": TELEGRAM_CHAT_ID if TELEGRAM_CHAT_ID else "не настроен",
+        "sessions_count": len(user_sessions)
     }
     
     return {
@@ -490,7 +535,8 @@ async def debug_sessions():
             "stage": session_data.get('stage'),
             "message_count": session_data.get('message_count', 0),
             "telegram_sent": session_data.get('telegram_sent', False),
-            "contacts_provided": session_data.get('contacts_provided', False)
+            "contacts_provided": session_data.get('contacts_provided', False),
+            "procedure_mentioned": session_data.get('procedure_mentioned', False)
         }
     
     return {
