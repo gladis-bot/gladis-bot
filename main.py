@@ -321,73 +321,54 @@ async def chat_endpoint(request: Request):
     # Извлекаем контакты из сообщения
     extract_contacts_from_message(user_message, session)
     
-    # ===== ОТПРАВКА В TELEGRAM С ИСПОЛЬЗОВАНИЕМ AI =====
+# ===== ОТПРАВКА В TELEGRAM =====
+
+telegram_was_sent_now = False
+
+# Если есть имя И телефон И еще не отправляли
+if session['name'] and session['phone'] and not session.get('telegram_sent', False):
+    print(f"🚨 ПРОВЕРКА ОТПРАВКИ В TELEGRAM:")
+    print(f"   👤 Имя: {session['name']}")
+    print(f"   📞 Телефон: {session['phone']}")
+    print(f"   💉 Процедуры упоминались: {session['procedure_mentioned']}")
+    print(f"   💬 Последнее сообщение: '{user_message[:50]}...'")
     
-    telegram_was_sent_now = False
+    # УПРОЩЕННАЯ ЛОГИКА: Всегда отправляем если есть контакты И была процедура
+    should_send = False
     
-    # Если есть имя И телефон И еще не отправляли
-    if session['name'] and session['phone'] and not session.get('telegram_sent', False):
-        print(f"🚨 Проверяем отправку в Telegram...")
-        print(f"   👤 Имя: {session['name']}")
-        print(f"   📞 Телефон: {session['phone']}")
-        print(f"   📝 Сообщений: {session['message_count']}")
-        print(f"   🔍 Процедуры упоминались: {session['procedure_mentioned']}")
+    # 1. Явное намерение записаться (ключевые слова)
+    message_lower = user_message.lower()
+    explicit_intent = any(word in message_lower for word in [
+        'запис', 'хочу', 'нужно', 'можно', 'готов', 'давайте', 
+        'интересует', 'завтра', 'сегодня', 'после'
+    ])
+    
+    # 2. В диалоге упоминались процедуры
+    procedure_mentioned = session['procedure_mentioned']
+    
+    print(f"🔍 Проверка:")
+    print(f"   Явное намерение: {explicit_intent}")
+    print(f"   Процедуры в диалоге: {procedure_mentioned}")
+    
+    # Отправляем если: явное намерение ИЛИ процедуры в диалоге
+    should_send = explicit_intent or procedure_mentioned
+    
+    if should_send:
+        print(f"🚨 ОТПРАВЛЯЕМ ЗАЯВКУ В TELEGRAM!")
+        full_conversation = "\n".join(session['text_parts'])
+        success = send_complete_application_to_telegram(session, full_conversation)
         
-        # СПОСОБ 1: Используем AI для определения намерений
-        should_send = False
-        
-        if REPLICATE_API_TOKEN:
-            try:
-                # Получаем последние сообщения для контекста
-                recent_history = "\n".join(session['text_parts'][-3:]) if len(session['text_parts']) > 3 else "\n".join(session['text_parts'])
-                
-                print(f"🤖 Использую AI для анализа намерений клиента...")
-                should_send = detect_application_intent_with_ai(
-                    REPLICATE_API_TOKEN, 
-                    recent_history, 
-                    user_message
-                )
-                print(f"🤖 AI решение по отправке: {'✅ ОТПРАВИТЬ' if should_send else '❌ НЕ отправлять'}")
-                
-                if should_send:
-                    print(f"🚨 AI определил что это ЗАЯВКА, отправляем в Telegram")
-                else:
-                    print(f"ℹ️ AI определил что это ИНФОРМАЦИОННЫЙ запрос, не отправляем")
-                    
-            except Exception as e:
-                print(f"❌ Ошибка AI при анализе намерений: {str(e)}")
-                # Fallback на простую логику
-                should_send = session['procedure_mentioned'] or len(session['text_parts']) > 2
-        else:
-            # Fallback если AI недоступен
-            should_send = session['procedure_mentioned'] or len(session['text_parts']) > 2
-        
-        # Всегда отправляем если клиент явно хочет записаться (по ключевым словам)
-        message_lower = user_message.lower()
-        explicit_intent = any(word in message_lower for word in [
-            'запис', 'хочу', 'нужно', 'можно', 'готов', 'давайте', 'интересует'
-        ])
-        
-        if explicit_intent:
-            print(f"🔍 Явное намерение записаться обнаружено, отправляем")
-            should_send = True
-        
-        # Отправляем если нужно
-        if should_send:
-            print(f"📨 ОТПРАВКА ЗАЯВКИ В TELEGRAM...")
-            success = send_complete_application_to_telegram(session, full_conversation)
-            
-            if success:
-                session['telegram_sent'] = True
-                session['stage'] = 'completed'
-                session['contacts_provided'] = True
-                telegram_was_sent_now = True
-                print(f"✅ Заявка отправлена в Telegram, stage изменен на 'completed'")
-            else:
-                print(f"❌ Ошибка отправки в Telegram")
-        else:
-            print(f"ℹ️  Контакты есть, но нет намерения записаться, не отправляем в Telegram")
+        if success:
+            session['telegram_sent'] = True
+            session['stage'] = 'completed'
             session['contacts_provided'] = True
+            telegram_was_sent_now = True
+            print(f"✅ Заявка отправлена в Telegram")
+        else:
+            print(f"❌ Ошибка отправки в Telegram")
+    else:
+        print(f"ℹ️  Контакты есть, но нет явного намерения записаться")
+        session['contacts_provided'] = True
     
     # ===== ГЕНЕРАЦИЯ ОТВЕТА БОТА =====
     
