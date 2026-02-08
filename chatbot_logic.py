@@ -202,14 +202,15 @@ def generate_bot_reply(api_key: str, message: str) -> str:
         # 4. Используем AI
         client = replicate.Client(api_token=api_key)
         
+        # ИСПРАВЛЕННАЯ СТРОКА: убрали stop_sequences
         output = replicate.run(
             "meta/meta-llama-3-70b-instruct",
             input={
                 "prompt": full_prompt,
                 "max_tokens": 800,  # Больше токенов для подробных ответов
                 "temperature": 0.7,
-                "top_p": 0.9,
-                "stop_sequences": ["\n\n", "###", "Конец"]
+                "top_p": 0.9
+                # УБРАЛИ: "stop_sequences": ["\n\n", "###", "Конец"]
             }
         )
         
@@ -266,14 +267,15 @@ def extract_name_with_ai(api_key: str, message: str) -> str:
 
         client = replicate.Client(api_token=api_key)
         
+        # ИСПРАВЛЕННАЯ СТРОКА: убрали stop_sequences
         output = client.run(
             "meta/meta-llama-3-70b-instruct",
             input={
                 "prompt": prompt,
                 "max_tokens": 20,
                 "temperature": 0.1,
-                "top_p": 0.9,
-                "stop_sequences": ["\n", ".", ",", "not_found"]
+                "top_p": 0.9
+                # УБРАЛИ: "stop_sequences": ["\n", ".", ",", "not_found"]
             }
         )
         
