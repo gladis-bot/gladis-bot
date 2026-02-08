@@ -267,7 +267,7 @@ def extract_name_with_ai(api_key: str, message: str) -> str:
         client = replicate.Client(api_token=api_key)
         
         output = client.run(
-            "meta/meta-llama-3-70b-instruct",
+            "meta/llama-3-70b-instruct",
             input={
                 "prompt": prompt,
                 "max_tokens": 20,
