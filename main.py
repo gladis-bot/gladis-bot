@@ -4,7 +4,7 @@ from typing import Dict, Any
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from chatbot_logic import generate_bot_reply, extract_name_with_ai, check_interesting_application, detect_application_intent_with_ai
+from chatbot_logic import generate_bot_reply, extract_name_with_ai
 from telegram_utils import send_to_telegram, send_incomplete_to_telegram, send_complete_application_to_telegram
 from dotenv import load_dotenv
 import re
@@ -239,8 +239,29 @@ def extract_contacts_from_message(message: str, session: Dict[str, Any]):
             session['phone'] = clean_phone
             print(f"📞 Найден телефон: {raw_phone} → {session['phone']}")
     
-    # ===== ПОИСК ИМЕНИ ТОЛЬКО ЧЕРЕЗ AI =====
-    # Ищем имя только если нет имени в сессии
+    # ===== ПОИСК ИМЕНИ =====
+    # Простой поиск имен (дополнительно к AI)
+    if not session['name']:
+        # Ищем русские имена в сообщении
+        name_patterns = [
+            r'(?:меня\s+зовут|имя\s+)?([А-ЯЁ][а-яё]{1,20})(?:\s|,|$)',
+            r'^([А-ЯЁ][а-яё]{1,20})\s',
+            r'\b([А-ЯЁ][а-яё]{1,20})\b(?:\s+\d)'
+        ]
+        
+        for pattern in name_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                found_name = match.group(1)
+                # Проверяем что это не процедура
+                procedure_words = ['ботокс', 'эпиляция', 'лазер', 'коллаген', 
+                                 'чистка', 'пилинг', 'смас', 'морфиус']
+                if found_name.lower() not in procedure_words:
+                    session['name'] = found_name
+                    print(f"👤 Найдено имя: {session['name']}")
+                    break
+    
+    # ===== AI поиск имени =====
     if not session['name'] and REPLICATE_API_TOKEN and len(message.strip()) > 3:
         print(f"🔍 Использую AI для поиска имени в: '{message}'")
         found_name = extract_name_with_ai(REPLICATE_API_TOKEN, message)
@@ -301,7 +322,6 @@ async def chat_endpoint(request: Request):
             'incomplete_sent': False,
             'message_count': 0,
             'contacts_provided': False,
-            'application_detected': False,
             'procedure_mentioned': False
         }
     
@@ -311,8 +331,8 @@ async def chat_endpoint(request: Request):
     
     # Проверяем, упоминались ли процедуры в диалоге
     full_conversation = "\n".join(session['text_parts']).lower()
-    procedure_keywords = ['эпиляция', 'лазер', 'ботокс', 'чистка', 'пилинг', 'бикини', 'подмышки', 
-                         'голени', 'бедра', 'биоревитализация', 'инъекция', 'укол', 'смас', 'морфиус']
+    procedure_keywords = ['эпиляция', 'лазер', 'ботокс', 'чистка', 'пилинг', 'бикини', 
+                         'коллаген', 'биоревитализация', 'инъекция', 'укол', 'смас', 'морфиус']
     
     if any(keyword in full_conversation for keyword in procedure_keywords):
         session['procedure_mentioned'] = True
@@ -321,54 +341,54 @@ async def chat_endpoint(request: Request):
     # Извлекаем контакты из сообщения
     extract_contacts_from_message(user_message, session)
     
-# ===== ОТПРАВКА В TELEGRAM =====
-
-telegram_was_sent_now = False
-
-# Если есть имя И телефон И еще не отправляли
-if session['name'] and session['phone'] and not session.get('telegram_sent', False):
-    print(f"🚨 ПРОВЕРКА ОТПРАВКИ В TELEGRAM:")
-    print(f"   👤 Имя: {session['name']}")
-    print(f"   📞 Телефон: {session['phone']}")
-    print(f"   💉 Процедуры упоминались: {session['procedure_mentioned']}")
-    print(f"   💬 Последнее сообщение: '{user_message[:50]}...'")
+    # ===== ОТПРАВКА В TELEGRAM =====
     
-    # УПРОЩЕННАЯ ЛОГИКА: Всегда отправляем если есть контакты И была процедура
-    should_send = False
+    telegram_was_sent_now = False
     
-    # 1. Явное намерение записаться (ключевые слова)
-    message_lower = user_message.lower()
-    explicit_intent = any(word in message_lower for word in [
-        'запис', 'хочу', 'нужно', 'можно', 'готов', 'давайте', 
-        'интересует', 'завтра', 'сегодня', 'после'
-    ])
-    
-    # 2. В диалоге упоминались процедуры
-    procedure_mentioned = session['procedure_mentioned']
-    
-    print(f"🔍 Проверка:")
-    print(f"   Явное намерение: {explicit_intent}")
-    print(f"   Процедуры в диалоге: {procedure_mentioned}")
-    
-    # Отправляем если: явное намерение ИЛИ процедуры в диалоге
-    should_send = explicit_intent or procedure_mentioned
-    
-    if should_send:
-        print(f"🚨 ОТПРАВЛЯЕМ ЗАЯВКУ В TELEGRAM!")
-        full_conversation = "\n".join(session['text_parts'])
-        success = send_complete_application_to_telegram(session, full_conversation)
+    # Если есть имя И телефон И еще не отправляли
+    if session['name'] and session['phone'] and not session.get('telegram_sent', False):
+        print(f"🚨 ПРОВЕРКА ОТПРАВКИ В TELEGRAM:")
+        print(f"   👤 Имя: {session['name']}")
+        print(f"   📞 Телефон: {session['phone']}")
+        print(f"   💉 Процедуры упоминались: {session['procedure_mentioned']}")
+        print(f"   💬 Последнее сообщение: '{user_message[:50]}...'")
         
-        if success:
-            session['telegram_sent'] = True
-            session['stage'] = 'completed'
-            session['contacts_provided'] = True
-            telegram_was_sent_now = True
-            print(f"✅ Заявка отправлена в Telegram")
+        # УПРОЩЕННАЯ ЛОГИКА: Всегда отправляем если есть контакты И была процедура
+        should_send = False
+        
+        # 1. Явное намерение записаться (ключевые слова)
+        message_lower = user_message.lower()
+        explicit_intent = any(word in message_lower for word in [
+            'запис', 'хочу', 'нужно', 'можно', 'готов', 'давайте', 
+            'интересует', 'завтра', 'сегодня', 'после'
+        ])
+        
+        # 2. В диалоге упоминались процедуры
+        procedure_mentioned = session['procedure_mentioned']
+        
+        print(f"🔍 Проверка:")
+        print(f"   Явное намерение: {explicit_intent}")
+        print(f"   Процедуры в диалоге: {procedure_mentioned}")
+        
+        # Отправляем если: явное намерение ИЛИ процедуры в диалоге
+        should_send = explicit_intent or procedure_mentioned
+        
+        if should_send:
+            print(f"🚨 ОТПРАВЛЯЕМ ЗАЯВКУ В TELEGRAM!")
+            full_conversation = "\n".join(session['text_parts'])
+            success = send_complete_application_to_telegram(session, full_conversation)
+            
+            if success:
+                session['telegram_sent'] = True
+                session['stage'] = 'completed'
+                session['contacts_provided'] = True
+                telegram_was_sent_now = True
+                print(f"✅ Заявка отправлена в Telegram")
+            else:
+                print(f"❌ Ошибка отправки в Telegram")
         else:
-            print(f"❌ Ошибка отправки в Telegram")
-    else:
-        print(f"ℹ️  Контакты есть, но нет явного намерения записаться")
-        session['contacts_provided'] = True
+            print(f"ℹ️  Контакты есть, но нет явного намерения записаться")
+            session['contacts_provided'] = True
     
     # ===== ГЕНЕРАЦИЯ ОТВЕТА БОТА =====
     
