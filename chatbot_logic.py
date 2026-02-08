@@ -203,7 +203,7 @@ def generate_bot_reply(api_key: str, message: str) -> str:
         client = replicate.Client(api_token=api_key)
         
         output = replicate.run(
-            "meta/meta-llama-3-70b-instruct",
+            "meta/llama-3-70b-instruct",
             input={
                 "prompt": full_prompt,
                 "max_tokens": 800,  # Больше токенов для подробных ответов
