@@ -76,7 +76,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Получаем переменные окружения
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "@sochigladisbot")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 
 # Хранилище сессий пользователей
@@ -234,52 +234,31 @@ def extract_contacts_from_message(message: str, session: Dict[str, Any]):
             session['phone'] = clean_phone
             print(f"📞 Найден телефон: {raw_phone} → {session['phone']}")
     
-    # ===== ПОИСК ИМЕНИ =====
-    found_name = None
-    
-    # 1. Сначала пробуем стандартные паттерны
-    name_patterns = [
-        r'(?:меня\s+зовут|имя|зовут|мое\s+имя)[\s:]+([а-яё\-]+\s*[а-яё\-]*)',
-        r'я\s+([а-яё\-]+)',
-        r'([а-яё\-]+)[\s,]*(?:телефон|тел\.?)',
-    ]
-    
-    for pattern in name_patterns:
-        match = re.search(pattern, message_lower)
-        if match:
-            found_name = match.group(1).strip()
-            found_name = re.sub(r'[\d\+]', '', found_name).strip()
-            if found_name and len(found_name) >= 2:
-                if '-' in found_name:
-                    parts = found_name.split('-')
-                    found_name = '-'.join([part.capitalize() for part in parts])
-                else:
-                    found_name = found_name.capitalize()
-                break
-    
-    # 2. Если не нашли по паттернам, используем AI (если есть токен и сообщение достаточно длинное)
-    if not found_name and REPLICATE_API_TOKEN and len(message.split()) > 1:
+    # ===== ПОИСК ИМЕНИ ТОЛЬКО ЧЕРЕЗ AI =====
+    # Ищем имя только если нет имени в сессии
+    if not session['name'] and REPLICATE_API_TOKEN and len(message.strip()) > 3:
         print(f"🔍 Использую AI для поиска имени в: '{message}'")
         found_name = extract_name_with_ai(REPLICATE_API_TOKEN, message)
+        
         if found_name:
-            print(f"✅ AI нашел имя: {found_name}")
-    
-    # 3. Если AI не нашел или нет токена, пробуем простую логику
-    if not found_name:
-        words = re.findall(r'[А-ЯЁа-яё\-]+', message)
-        if words:
-            for candidate in words:
-                if len(candidate) >= 2 and candidate[0].isupper():
-                    stop_words = {'Добрый', 'День', 'Вечер', 'Утро', 'Здравствуйте', 
-                                 'Привет', 'Хочу', 'Записаться', 'На', 'Процедуру', 'По'}
-                    if candidate not in stop_words:
-                        found_name = candidate
-                        break
-    
-    # Сохраняем найденное имя
-    if found_name and not session['name']:
-        session['name'] = found_name
-        print(f"👤 Найдено имя: {session['name']}")
+            # Дополнительная проверка - не является ли это процедурой
+            PROCEDURE_WORDS = [
+                'ботокс', 'ботулин', 'ботулотоксин', 'эпиляция', 'лазерная',
+                'биоревитализация', 'чистка', 'пилинг', 'лифтинг', 'макияж',
+                'мезотерапия', 'трихолакс', 'профхило', 'диспорт', 'релатокс',
+                'гиалуроновая', 'гиалуронка', 'плазмолифтинг', 'смас', 'морфиус'
+            ]
+            
+            name_lower = found_name.lower()
+            is_procedure = any(proc in name_lower for proc in PROCEDURE_WORDS)
+            
+            if not is_procedure and len(found_name) >= 2 and len(found_name) <= 30:
+                session['name'] = found_name
+                print(f"✅ AI определил имя: {session['name']}")
+            else:
+                print(f"⚠️ AI нашел '{found_name}', но это похоже на процедуру, а не имя")
+        else:
+            print(f"ℹ️ AI не нашел имя в сообщении")
 
 @app.post("/chat")
 async def chat_endpoint(request: Request):
@@ -379,7 +358,8 @@ async def chat_endpoint(request: Request):
         message_lower = user_message.lower()
         has_registration_keywords = any(word in message_lower for word in [
             "запис", "хочу", "нужно", "можно", "процедур", 
-            "макияж", "эпиляция", "ботокс", "чистка"
+            "макияж", "эпиляция", "ботокс", "чистка", "ботулин",
+            "биоревитализация", "пилинг", "лифтинг", "смас"
         ])
         
         if is_application or has_registration_keywords:
@@ -393,7 +373,7 @@ async def chat_endpoint(request: Request):
                 
                 # Если AI еще не сказал про отправку, добавляем
                 if "спасибо" not in bot_reply.lower() and "переда" not in bot_reply.lower():
-                    bot_reply = "✅ Спасибо! Заявка передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон: 8-928-458-32-88"
+                    bot_reply = "✅ Спасибо! Заявка передана менеджеру. С вами свяжутся для подтверждения записи."
                 else:
                     # Убедимся что есть контакты в ответе
                     if "8-928" not in bot_reply:
@@ -416,12 +396,12 @@ async def chat_endpoint(request: Request):
             session['telegram_sent'] = True
             session['stage'] = 'completed'
             session['contacts_provided'] = True
-            bot_reply = "✅ Спасибо! Вся информация передана администратору. С вами свяжутся для подтверждения записи.\n\n📞 Телефон: 8-928-458-32-88\n📍 Адреса:\n   📍 Сочи: ул. Воровского, 22\n   📍 Адлер: ул. Кирова, д. 26а\n⏰ Ежедневно 10:00-20:00"
+            bot_reply = "✅ Спасибо! Вся информация передана администратору. С вами свяжутся для подтверждения записи.\n\n📞 Телефон: 8-928-458-32-88"
     
     # Если заявка уже завершена
     elif session['stage'] == 'completed' or session.get('telegram_sent', False):
-        if "спасибо" not in bot_reply.lower():
-            bot_reply = "✅ Ваша заявка уже передана администратору. С вами свяжутся для подтверждения записи.\n\n📞 Телефон: 8-928-458-32-88"
+        if "спасибо" not in bot_reply.lower() and "переда" not in bot_reply.lower():
+            bot_reply = "✅ Ваша заявка уже передана администратору. С вами свяжутся для подтверждения записи."
     
     # Логируем состояние сессии
     print(f"📊 СОСТОЯНИЕ СЕССИИ:")
@@ -446,7 +426,7 @@ async def health_check(request: Request):
     services_status = {
         "replicate_api": bool(REPLICATE_API_TOKEN),
         "telegram_bot": bool(TELEGRAM_BOT_TOKEN),
-        "telegram_chat": TELEGRAM_CHAT_ID
+        "telegram_chat": TELEGRAM_CHAT_ID if TELEGRAM_CHAT_ID else "не настроен"
     }
     
     return {
@@ -548,7 +528,7 @@ async def startup_event():
         print(f"   Длина токена: {len(REPLICATE_API_TOKEN)} символов")
     
     print(f"📱 Telegram: {'✅ Настроен' if TELEGRAM_BOT_TOKEN else '⚠️ Только логи'}")
-    print(f"💬 Канал: {TELEGRAM_CHAT_ID}")
+    print(f"💬 Chat ID: {'✅ Настроен' if TELEGRAM_CHAT_ID else '❌ Не настроен'}")
     
     if RENDER_EXTERNAL_URL and RENDER_EXTERNAL_URL.startswith("http"):
         print(f"🔔 Keep-alive URL: {RENDER_EXTERNAL_URL}")
