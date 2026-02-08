@@ -4,7 +4,7 @@ from typing import Dict, Any
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from chatbot_logic import generate_bot_reply, extract_name_with_ai
+from chatbot_logic import generate_bot_reply, extract_name_with_ai, check_interesting_application
 from telegram_utils import send_to_telegram, send_incomplete_to_telegram, send_complete_application_to_telegram
 from dotenv import load_dotenv
 import re
@@ -114,15 +114,25 @@ def is_contact_collection_request(bot_reply: str) -> bool:
     """Проверяет, просит ли бот контакты в ответе."""
     reply_lower = bot_reply.lower()
     
+    # ТОЛЬКО явные и полные запросы контактов
     contact_phrases = [
-        "ваше имя", "ваш телефон", "для записи мне нужно",
-        "назовите ваше имя", "укажите телефон", "как вас зовут",
-        "мне нужно ваше имя", "ваше имя и телефон",
-        "укажите ваше имя", "укажите телефон", "телефон для связи",
-        "ваше имя и номер", "имя и контакты"
+        "для записи мне нужно ваше имя и телефон",
+        "укажите ваше имя и телефон для записи",
+        "назовите ваше имя и телефон",
+        "мне нужны ваше имя и телефон",
+        "имя и телефон для записи",
+        "ваше имя и номер телефона",
+        "предоставьте имя и телефон",
+        "оставьте имя и телефон",
+        "дайте имя и телефон"
     ]
     
-    return any(phrase in reply_lower for phrase in contact_phrases)
+    # Ищем ТОЛЬКО полные фразы про имя И телефон
+    for phrase in contact_phrases:
+        if phrase in reply_lower:
+            return True
+    
+    return False
 
 # ====== УПРОЩЕННАЯ ФУНКЦИЯ ДЛЯ ПОДДЕРЖАНИЯ АКТИВНОСТИ ======
 
@@ -302,11 +312,13 @@ async def chat_endpoint(request: Request):
             'created_at': datetime.now(),
             'name': None,
             'phone': None,
-            'stage': 'consultation',  # Всегда начинаем с консультации
+            'stage': 'consultation',
             'text_parts': [],
             'telegram_sent': False,
             'incomplete_sent': False,
             'message_count': 0,
+            'contacts_provided': False,
+            'application_detected': False
         }
     
     session = user_sessions[user_ip]
@@ -320,13 +332,22 @@ async def chat_endpoint(request: Request):
     
     bot_reply = ""
     
+    # Определяем первое ли это сообщение в сессии
+    is_first_in_session = (session['message_count'] == 1)
+    
     # Если у нас есть AI токен - используем его
     if REPLICATE_API_TOKEN and len(REPLICATE_API_TOKEN) > 20:
         print("🤖 Использую AI для генерации ответа...")
         
         try:
-            # Генерируем ответ через AI
-            bot_reply = generate_bot_reply(REPLICATE_API_TOKEN, user_message)
+            # Генерируем ответ через AI с контекстом сессии
+            bot_reply = generate_bot_reply(
+                REPLICATE_API_TOKEN, 
+                user_message, 
+                is_first_in_session,
+                bool(session['name']),  # has_name
+                bool(session['phone'])  # has_phone
+            )
             print(f"✅ AI ответ сгенерирован")
             
             # Проверяем, не просит ли AI контакты
@@ -344,30 +365,72 @@ async def chat_endpoint(request: Request):
         print("⚠️ AI недоступен, использую простую логику")
         bot_reply = get_fallback_response(user_message)
     
-    # ===== ОБРАБОТКА КОНТАКТОВ =====
+    # ===== ОБРАБОТКА КОНТАКТОВ И ОТПРАВКА В TELEGRAM =====
     
-    # Если мы в режиме сбора контактов И у нас уже есть контакты
-    if session['stage'] == 'contact_collection' and session['name'] and session['phone']:
-        print(f"📨 Собраны все контакты, отправляем в Telegram")
+    # Если есть имя И телефон, проверяем нужно ли отправлять в Telegram
+    if session['name'] and session['phone'] and not session.get('telegram_sent', False):
+        print(f"📨 Найдены контакты, проверяем нужно ли отправлять в Telegram")
+        
+        # Проверяем, что это заявка (а не просто разговор)
+        full_conversation = "\n".join(session['text_parts'])
+        is_application = check_interesting_application(full_conversation)
+        
+        # Также проверяем по ключевым словам в последнем сообщении
+        message_lower = user_message.lower()
+        has_registration_keywords = any(word in message_lower for word in [
+            "запис", "хочу", "нужно", "можно", "процедур", 
+            "макияж", "эпиляция", "ботокс", "чистка"
+        ])
+        
+        if is_application or has_registration_keywords:
+            print(f"🚨 Обнаружена заявка, отправляем в Telegram")
+            success = send_complete_application_to_telegram(session, full_conversation)
+            
+            if success:
+                session['telegram_sent'] = True
+                session['stage'] = 'completed'
+                session['contacts_provided'] = True
+                
+                # Если AI еще не сказал про отправку, добавляем
+                if "спасибо" not in bot_reply.lower() and "переда" not in bot_reply.lower():
+                    bot_reply = "✅ Спасибо! Заявка передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон: 8-928-458-32-88"
+                else:
+                    # Убедимся что есть контакты в ответе
+                    if "8-928" not in bot_reply:
+                        bot_reply += "\n\n📞 Телефон для связи: 8-928-458-32-88"
+            else:
+                print(f"❌ Ошибка отправки в Telegram")
+                if "телефон" not in bot_reply.lower():
+                    bot_reply += "\n\nДля уточнения деталей позвоните по телефону 8-928-458-32-88"
+        else:
+            print(f"ℹ️  Просто разговор с контактами, не отправляем в Telegram")
+            session['contacts_provided'] = True
+    
+    # Если мы в режиме сбора контактов И у нас уже есть контакты (старая логика для совместимости)
+    elif session['stage'] == 'contact_collection' and session['name'] and session['phone'] and not session.get('telegram_sent', False):
+        print(f"📨 Собраны все контакты (старая логика), отправляем в Telegram")
         full_text = "\n".join(session['text_parts'])
         success = send_complete_application_to_telegram(session, full_text)
         
         if success:
             session['telegram_sent'] = True
             session['stage'] = 'completed'
+            session['contacts_provided'] = True
             bot_reply = "✅ Спасибо! Вся информация передана администратору. С вами свяжутся для подтверждения записи.\n\n📞 Телефон: 8-928-458-32-88\n📍 Адреса:\n   📍 Сочи: ул. Воровского, 22\n   📍 Адлер: ул. Кирова, д. 26а\n⏰ Ежедневно 10:00-20:00"
     
     # Если заявка уже завершена
-    elif session['stage'] == 'completed':
-        bot_reply = "Ваша заявка уже передана администратору. С вами свяжутся для подтверждения записи.\n\n📞 Телефон: 8-928-458-32-88\n📍 Адреса:\n   📍 Сочи: ул. Воровского, 22\n   📍 Адлер: ул. Кирова, д. 26а\n⏰ Ежедневно 10:00-20:00"
+    elif session['stage'] == 'completed' or session.get('telegram_sent', False):
+        if "спасибо" not in bot_reply.lower():
+            bot_reply = "✅ Ваша заявка уже передана администратору. С вами свяжутся для подтверждения записи.\n\n📞 Телефон: 8-928-458-32-88"
     
     # Логируем состояние сессии
     print(f"📊 СОСТОЯНИЕ СЕССИИ:")
     print(f"   Этап: {session['stage']}")
     print(f"   👤 Имя: {'✅ ' + session['name'] if session['name'] else '❌ Нет'}")
     print(f"   📞 Телефон: {'✅ ' + str(session['phone']) if session['phone'] else '❌ Нет'}")
-    print(f"   📨 Отправлено: {'✅' if session.get('telegram_sent') else '❌'}")
+    print(f"   📨 Отправлено в Telegram: {'✅' if session.get('telegram_sent') else '❌'}")
     print(f"   📝 Сообщений: {session['message_count']}")
+    print(f"   🔍 Контакты получены: {'✅' if session.get('contacts_provided') else '❌'}")
     
     print(f"🤖 Ответ бота: '{bot_reply[:100]}...'" if len(bot_reply) > 100 else f"🤖 Ответ бота: '{bot_reply}'")
     print("="*40)
@@ -446,7 +509,8 @@ async def debug_sessions():
             "phone": session_data['phone'],
             "stage": session_data.get('stage'),
             "message_count": session_data.get('message_count', 0),
-            "telegram_sent": session_data.get('telegram_sent', False)
+            "telegram_sent": session_data.get('telegram_sent', False),
+            "contacts_provided": session_data.get('contacts_provided', False)
         }
     
     return {
