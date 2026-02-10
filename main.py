@@ -291,6 +291,51 @@ def extract_contacts_from_message(message: str, session: Dict[str, Any]):
             print(f"✅ AI определил/исправил имя: {session['name']}")
         else:
             print(f"ℹ️ AI не нашел подходящее имя в сообщении")
+    
+    # ===== ОПРЕДЕЛЕНИЕ ПРОЦЕДУРЫ =====
+    # Определяем, о какой процедуре идет речь (для контекста диалога)
+    procedure_keywords = {
+        'лазерная эпиляция': ['эпиляция', 'лазер', 'удаление волос', 'бикини', 'подмышки', 'ноги', 'александрит', 'инновейшен', 'innovation', 'quanta'],
+        'чистка лица': ['чистка', 'пилинг', 'акне', 'поры', 'ультразвуковая', 'механическая', 'гидропилинг'],
+        'ботулотоксин': ['ботокс', 'ботулин', 'морщины', 'диспорт', 'гипергидроз'],
+        'лифтинг': ['лифтинг', 'подтяжка', 'смас', 'ультера', 'морфиус'],
+        'биоревитализация': ['биоревитализация', 'гиалуроновая', 'профхайло', 'hyaron'],
+        'капельницы': ['капельниц', 'инфузи', 'витамин', 'детокс', 'иммуносуппорт'],
+        'фотоомоложение': ['пигмент', 'пятн', 'веснушк', 'фотоомоложение', 'люмекка', 'lumecca'],
+        'мезотерапия': ['мезотерапия', 'инъекци', 'укол'],
+        'перманентный макияж': ['перманент', 'макияж', 'татуаж', 'брови', 'губы'],
+        'удаление тату': ['тату', 'татуировк', 'удаление тату']
+    }
+    
+    # Проверяем текущее сообщение на наличие процедур
+    for procedure_type, keywords in procedure_keywords.items():
+        if any(keyword in message_lower for keyword in keywords):
+            session['last_procedure'] = procedure_type
+            print(f"📋 Определена процедура: {procedure_type}")
+            break
+
+def get_last_procedure_from_history(session: Dict[str, Any]) -> str:
+    """Определяет последнюю процедуру из истории диалога."""
+    if session.get('last_procedure'):
+        return session['last_procedure']
+    
+    # Анализируем историю сообщений
+    procedure_keywords = {
+        'лазерная эпиляция': ['эпиляция', 'лазер', 'бикини', 'подмышки'],
+        'чистка лица': ['чистка', 'пилинг', 'акне'],
+        'ботулотоксин': ['ботокс', 'ботулин', 'морщины'],
+        'биоревитализация': ['биоревитализация', 'гиалуроновая'],
+        'капельницы': ['капельниц', 'детокс', 'витамин']
+    }
+    
+    # Ищем в последних сообщениях
+    for msg in reversed(session.get('text_parts', [])):
+        msg_lower = msg.lower()
+        for procedure_type, keywords in procedure_keywords.items():
+            if any(keyword in msg_lower for keyword in keywords):
+                return procedure_type
+    
+    return None
 
 @app.post("/chat")
 async def chat_endpoint(request: Request):
@@ -327,7 +372,8 @@ async def chat_endpoint(request: Request):
             'incomplete_sent': False,
             'message_count': 0,
             'contacts_provided': False,
-            'procedure_mentioned': False
+            'procedure_mentioned': False,
+            'last_procedure': None  # Новое поле для хранения последней процедуры
         }
     
     session = user_sessions[user_ip]
@@ -343,8 +389,11 @@ async def chat_endpoint(request: Request):
         session['procedure_mentioned'] = True
         print(f"🔍 В диалоге упоминались процедуры")
     
-    # Извлекаем контакты из сообщения
+    # Извлекаем контакты и определяем процедуру из сообщения
     extract_contacts_from_message(user_message, session)
+    
+    # Определяем последнюю процедуру из истории
+    last_procedure = get_last_procedure_from_history(session)
     
     # ===== ОТПРАВКА В TELEGRAM =====
     
@@ -356,6 +405,7 @@ async def chat_endpoint(request: Request):
         print(f"   👤 Имя: {session['name']}")
         print(f"   📞 Телефон: {session['phone']}")
         print(f"   💉 Процедуры упоминались: {session['procedure_mentioned']}")
+        print(f"   📋 Последняя процедура: {last_procedure or 'Не определена'}")
         print(f"   💬 Последнее сообщение: '{user_message[:50]}...'")
         
         # УПРОЩЕННАЯ ЛОГИКА: Всегда отправляем если есть контакты И была процедура
@@ -381,6 +431,11 @@ async def chat_endpoint(request: Request):
         if should_send:
             print(f"🚨 ОТПРАВЛЯЕМ ЗАЯВКУ В TELEGRAM!")
             full_conversation = "\n".join(session['text_parts'])
+            
+            # Добавляем информацию о процедуре в сессию для Telegram
+            if last_procedure:
+                session['procedure_type'] = last_procedure
+            
             success = send_complete_application_to_telegram(session, full_conversation)
             
             if success:
@@ -426,14 +481,15 @@ async def chat_endpoint(request: Request):
             # Передаем информацию о том, отправлена ли уже заявка
             telegram_already_sent = session.get('telegram_sent', False)
             
-            # Генерируем ответ через AI с контекстом сессии
+            # Генерируем ответ через AI с контекстом сессии и процедуры
             bot_reply = generate_bot_reply(
                 REPLICATE_API_TOKEN, 
                 user_message, 
                 is_first_in_session,
                 bool(session['name']),  # has_name
                 bool(session['phone']), # has_phone
-                telegram_already_sent   # telegram_sent
+                telegram_already_sent,  # telegram_sent
+                last_procedure          # Добавляем контекст последней процедуры
             )
             print(f"✅ AI ответ сгенерирован")
             
@@ -461,6 +517,7 @@ async def chat_endpoint(request: Request):
     print(f"   📝 Сообщений: {session['message_count']}")
     print(f"   🔍 Контакты получены: {'✅' if session.get('contacts_provided') else '❌'}")
     print(f"   💉 Процедуры упоминались: {'✅' if session.get('procedure_mentioned') else '❌'}")
+    print(f"   📋 Последняя процедура: {last_procedure or '❌ Не определена'}")
     
     print(f"🤖 Ответ бота: '{bot_reply[:100]}...'" if len(bot_reply) > 100 else f"🤖 Ответ бота: '{bot_reply}'")
     print("="*40)
@@ -542,7 +599,8 @@ async def debug_sessions():
             "message_count": session_data.get('message_count', 0),
             "telegram_sent": session_data.get('telegram_sent', False),
             "contacts_provided": session_data.get('contacts_provided', False),
-            "procedure_mentioned": session_data.get('procedure_mentioned', False)
+            "procedure_mentioned": session_data.get('procedure_mentioned', False),
+            "last_procedure": session_data.get('last_procedure')
         }
     
     return {
