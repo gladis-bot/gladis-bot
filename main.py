@@ -11,9 +11,7 @@ from dotenv import load_dotenv
 import re
 from datetime import datetime, timedelta
 import requests
-import threading
 import time
-import signal
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -38,7 +36,6 @@ def validate_environment():
                 masked_value = "***"
             print(f"   ✅ {var_name}: {masked_value}")
     
-    # Проверяем TELEGRAM_CHAT_ID (может быть пустым для тестов)
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
     if not TELEGRAM_CHAT_ID:
         print(f"   ⚠️ TELEGRAM_CHAT_ID: не настроен (может быть пустым)")
@@ -52,7 +49,6 @@ def validate_environment():
     print("✅ Все обязательные переменные окружения присутствуют")
     return True
 
-# Проверяем переменные окружения
 print("\n" + "="*60)
 print("🚀 Запуск GLADIS Chatbot API")
 print("="*60)
@@ -66,7 +62,7 @@ if not env_valid:
 app = FastAPI(
     title="GLADIS Chatbot API",
     description="Чат-бот для клиники эстетической медицины GLADIS в Сочи",
-    version="2.1.0"  # Обновили версию
+    version="2.2.0"
 )
 
 # Настраиваем CORS
@@ -94,6 +90,10 @@ def get_fallback_response(message: str) -> str:
     """Простая логика ответа когда AI недоступен."""
     message_lower = message.lower()
     
+    # Прокол ушей
+    if "прокол" in message_lower and ("ухо" in message_lower or "уши" in message_lower):
+        return "Прокол ушей выполняется специальным пистолетом. Стоимость:\n• Оба уха: 4000 руб.\n• Одно ухо: 2000 руб.\n\nСерёжки из медицинской стали включены в стоимость! Используем только стерильные одноразовые картриджи. Хотите записаться?"
+    
     if any(greet in message_lower for greet in ["добрый", "здравствуйте", "привет"]):
         return "Здравствуйте! Клиника GLADIS, меня зовут Александра. Чем могу вам помочь?"
     
@@ -107,7 +107,7 @@ def get_fallback_response(message: str) -> str:
         return "Для записи мне нужно ваше имя и телефон. Укажите их, пожалуйста."
     
     elif any(word in message_lower for word in ["цена", "стоимость", "сколько стоит"]):
-        return "Стоимость зависит от выбранной процедуры. Могу подсказать цены на:\n• Лазерную эпиляцию\n• Чистку лица\n• Биоревитализацию\n• Ботулотоксин\n\nЧто именно вас интересует?"
+        return "Стоимость зависит от выбранной процедуры. Могу подсказать цены на:\n• Лазерную эпиляцию\n• Чистку лица\n• Биоревитализацию\n• Ботулотоксин\n• Прокол ушей\n\nЧто именно вас интересует?"
     
     elif any(word in message_lower for word in ["адрес", "где находитесь", "локация"]):
         return "📍 Наши адреса:\n• Сочи: ул. Воровского, 22\n• Адлер: ул. Кирова, д. 26а\n\n📞 Телефон: 8-928-458-32-88\n⏰ Ежедневно 10:00-20:00"
@@ -146,10 +146,9 @@ def cleanup_old_sessions():
         now = datetime.now()
         to_delete = []
         
-        for session_id, session_data in user_sessions.items():
+        for session_id, session_data in list(user_sessions.items()):
             session_age = now - session_data['created_at']
             
-            # Если сессии больше 10 минут И есть контакт И еще не отправлено
             if (session_age > timedelta(minutes=10) and 
                 not session_data.get('telegram_sent', False) and 
                 session_data.get('phone') and 
@@ -167,7 +166,6 @@ def cleanup_old_sessions():
                 session_data['telegram_sent'] = True
                 session_data['incomplete_sent'] = True
             
-            # Удаляем очень старые сессии (больше 2 часов)
             if session_age > timedelta(hours=2):
                 to_delete.append(session_id)
         
@@ -210,7 +208,6 @@ def extract_contacts_from_message(message: str, session: Dict[str, Any]):
     # ===== ПОИСК ИМЕНИ =====
     temp_name = None
     
-    # 1. Ищем слова с заглавной буквы
     russian_names = re.findall(r'\b[А-ЯЁ][а-яё]{1,20}\b', message)
     
     common_russian_names = [
@@ -241,17 +238,14 @@ def extract_contacts_from_message(message: str, session: Dict[str, Any]):
         session['name'] = temp_name
         print(f"✅ Обновлено имя в сессии: {session['name']}")
     
-    # 4. AI поиск имени (только если еще нет имени)
     if (not session['name'] or session['name'].lower() in ['привет', 'здравствуйте', 'добрый']) and REPLICATE_API_TOKEN and len(message.strip()) > 3:
         try:
-            print(f"🔍 Использую AI для поиска имени в: '{message}'")
+            print(f"🔍 Использую AI для поиска имени в: '{message[:30]}...'")
             found_name = extract_name_with_ai(REPLICATE_API_TOKEN, message)
             
             if found_name and found_name.lower() not in ['привет', 'здравствуйте', 'добрый']:
                 session['name'] = found_name
                 print(f"✅ AI определил/исправил имя: {session['name']}")
-            else:
-                print(f"ℹ️ AI не нашел подходящее имя в сообщении")
         except Exception as e:
             print(f"⚠️ Ошибка AI при извлечении имени: {e}")
     
@@ -266,7 +260,8 @@ def extract_contacts_from_message(message: str, session: Dict[str, Any]):
         'фотоомоложение': ['пигмент', 'пятн', 'веснушк', 'фотоомоложение', 'люмекка', 'lumecca'],
         'мезотерапия': ['мезотерапия', 'инъекци', 'укол'],
         'перманентный макияж': ['перманент', 'макияж', 'татуаж', 'брови', 'губы'],
-        'удаление тату': ['тату', 'татуировк', 'удаление тату']
+        'удаление тату': ['тату', 'татуировк', 'удаление тату'],
+        'прокол ушей': ['прокол', 'ухо', 'уши', 'пирсинг']
     }
     
     for procedure_type, keywords in procedure_keywords.items():
@@ -285,7 +280,8 @@ def get_last_procedure_from_history(session: Dict[str, Any]) -> str:
         'чистка лица': ['чистка', 'пилинг', 'акне'],
         'ботулотоксин': ['ботокс', 'ботулин', 'морщины'],
         'биоревитализация': ['биоревитализация', 'гиалуроновая'],
-        'капельницы': ['капельниц', 'детокс', 'витамин']
+        'капельницы': ['капельниц', 'детокс', 'витамин'],
+        'прокол ушей': ['прокол', 'ухо', 'уши']
     }
     
     for msg in reversed(session.get('text_parts', [])):
@@ -311,10 +307,8 @@ async def chat_endpoint(request: Request):
         print(f"👤 IP: {user_ip}")
         print(f"💬 Сообщение: '{user_message[:50]}...'" if len(user_message) > 50 else f"💬 Сообщение: '{user_message}'")
         
-        # Очищаем старые сессии
         cleanup_old_sessions()
         
-        # Создаем или получаем сессию
         if user_ip not in user_sessions:
             user_sessions[user_ip] = {
                 'created_at': datetime.now(),
@@ -334,19 +328,17 @@ async def chat_endpoint(request: Request):
         session['text_parts'].append(user_message)
         session['message_count'] += 1
         
-        # Проверяем, упоминались ли процедуры
         full_conversation = "\n".join(session['text_parts']).lower()
         procedure_keywords = ['эпиляция', 'лазер', 'ботокс', 'чистка', 'пилинг', 'бикини', 
-                             'коллаген', 'биоревитализация', 'инъекция', 'укол', 'смас', 'морфиус']
+                             'коллаген', 'биоревитализация', 'инъекция', 'укол', 'смас', 'морфиус', 
+                             'прокол', 'ухо', 'уши']
         
         if any(keyword in full_conversation for keyword in procedure_keywords):
             session['procedure_mentioned'] = True
             print(f"🔍 В диалоге упоминались процедуры")
         
-        # Извлекаем контакты
         extract_contacts_from_message(user_message, session)
         
-        # Определяем последнюю процедуру
         last_procedure = get_last_procedure_from_history(session)
         
         # ===== ОТПРАВКА В TELEGRAM =====
@@ -372,7 +364,6 @@ async def chat_endpoint(request: Request):
                 if last_procedure:
                     session['procedure_type'] = last_procedure
                 
-                # Отправляем в Telegram (с обработкой ошибок)
                 try:
                     success = send_complete_application_to_telegram(session, full_conversation)
                     
@@ -394,29 +385,22 @@ async def chat_endpoint(request: Request):
         bot_reply = ""
         is_first_in_session = (session['message_count'] == 1)
         
-        # Если заявка только что отправлена
         if telegram_was_sent_now:
             if session.get('name'):
                 bot_reply = f"✅ Спасибо, {session['name']}! Ваша заявка передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон клиники: 8-928-458-32-88"
             else:
                 bot_reply = "✅ Спасибо! Ваша заявка передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон клиники: 8-928-458-32-88"
         
-        # Если заявка уже была отправлена
         elif session['stage'] == 'completed' or session.get('telegram_sent', False):
             if session.get('name'):
                 bot_reply = f"✅ {session['name']}, ваша заявка уже передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон клиники: 8-928-458-32-88"
             else:
                 bot_reply = "✅ Ваша заявка уже передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон клиники: 8-928-458-32-88"
         
-        # Иначе используем AI с таймаутом
         elif REPLICATE_API_TOKEN and len(REPLICATE_API_TOKEN) > 20:
             print("🤖 Использую AI для генерации ответа...")
             
             try:
-                # Запускаем AI с таймаутом
-                import asyncio
-                
-                # Создаем задачу для AI
                 ai_task = asyncio.create_task(
                     asyncio.to_thread(
                         generate_bot_reply,
@@ -430,7 +414,6 @@ async def chat_endpoint(request: Request):
                     )
                 )
                 
-                # Ждем ответ с таймаутом 8 секунд
                 try:
                     bot_reply = await asyncio.wait_for(ai_task, timeout=8.0)
                     print(f"✅ AI ответ сгенерирован за <8 сек")
@@ -439,7 +422,6 @@ async def chat_endpoint(request: Request):
                     ai_task.cancel()
                     bot_reply = get_fallback_response(user_message)
                 
-                # Проверяем, не просит ли AI контакты
                 if is_contact_collection_request(bot_reply):
                     session['stage'] = 'contact_collection'
                     print("📝 AI запросил контакты")
@@ -448,12 +430,10 @@ async def chat_endpoint(request: Request):
                 print(f"❌ Ошибка при вызове AI: {str(e)}")
                 bot_reply = get_fallback_response(user_message)
         
-        # Если AI недоступен
         else:
             print("⚠️ AI недоступен, использую простую логику")
             bot_reply = get_fallback_response(user_message)
         
-        # Логируем состояние
         print(f"📊 СОСТОЯНИЕ СЕССИИ:")
         print(f"   👤 Имя: {'✅ ' + session['name'] if session['name'] else '❌ Нет'}")
         print(f"   📞 Телефон: {'✅ ' + str(session['phone']) if session['phone'] else '❌ Нет'}")
@@ -470,7 +450,6 @@ async def chat_endpoint(request: Request):
         import traceback
         traceback.print_exc()
         
-        # Всегда возвращаем ответ, даже при ошибке
         return {"reply": "Извините, произошла техническая ошибка. Пожалуйста, позвоните нам по телефону 8-928-458-32-88 для консультации."}
 
 @app.api_route("/health", methods=["GET", "HEAD"])
@@ -484,7 +463,7 @@ async def health_check(request: Request):
         "service": "gladis-chatbot-api",
         "timestamp": datetime.now().isoformat(),
         "sessions_count": len(user_sessions),
-        "version": "2.1.0"
+        "version": "2.2.0"
     }
 
 @app.get("/")
@@ -494,7 +473,7 @@ async def root():
         "service": "GLADIS Chatbot API",
         "description": "Чат-бот для клиники эстетической медицины GLADIS в Сочи",
         "status": "running",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "timestamp": datetime.now().isoformat()
     }
 
@@ -507,25 +486,22 @@ async def ping():
         "service": "gladis-chatbot"
     }
 
-# Обработчики сигналов для graceful shutdown
-def handle_shutdown(signum, frame):
-    print("\n🛑 Получен сигнал завершения, закрываем приложение...")
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, handle_shutdown)
-signal.signal(signal.SIGINT, handle_shutdown)
-
-# Убираем threading keep-alive и заменяем на асинхронный
+# Убираем обработчики сигналов - они конфликтуют с Render
+# Вместо этого используем простой keep-alive с requests
 async def keep_alive_task():
-    """Асинхронный keep-alive вместо threading."""
+    """Простой асинхронный keep-alive без aiohttp."""
     while True:
         try:
             await asyncio.sleep(180)  # 3 минуты
             if RENDER_EXTERNAL_URL and RENDER_EXTERNAL_URL.startswith("http"):
                 try:
-                    async with aiohttp.ClientSession() as session:
-                        await session.get(f"{RENDER_EXTERNAL_URL}/health", timeout=5)
-                        print(f"🔔 Keep-alive ping успешен")
+                    # Используем requests в отдельном потоке
+                    await asyncio.to_thread(
+                        requests.get, 
+                        f"{RENDER_EXTERNAL_URL}/health", 
+                        timeout=5
+                    )
+                    print(f"🔔 Keep-alive ping успешен")
                 except Exception as e:
                     print(f"⚠️ Keep-alive ping failed: {e}")
         except asyncio.CancelledError:
@@ -545,12 +521,17 @@ async def startup_event():
     
     if RENDER_EXTERNAL_URL and RENDER_EXTERNAL_URL.startswith("http"):
         print(f"🔔 Keep-alive URL: {RENDER_EXTERNAL_URL}")
-        # Запускаем асинхронный keep-alive
         asyncio.create_task(keep_alive_task())
-        print("🔔 Асинхронный keep-alive запущен")
+        print("🔔 Keep-alive запущен")
     
     print("✅ Приложение готово к работе")
     print("="*60 + "\n")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Завершение работы."""
+    print("\n🛑 Завершение работы приложения...")
+    # Просто логируем, не вызываем sys.exit()
 
 if __name__ == "__main__":
     import uvicorn
