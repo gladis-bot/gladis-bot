@@ -385,18 +385,47 @@ async def chat_endpoint(request: Request):
         bot_reply = ""
         is_first_in_session = (session['message_count'] == 1)
         
+        # Если заявка ТОЛЬКО ЧТО отправлена - показываем подтверждение
         if telegram_was_sent_now:
             if session.get('name'):
                 bot_reply = f"✅ Спасибо, {session['name']}! Ваша заявка передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон клиники: 8-928-458-32-88"
             else:
                 bot_reply = "✅ Спасибо! Ваша заявка передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон клиники: 8-928-458-32-88"
         
-        elif session['stage'] == 'completed' or session.get('telegram_sent', False):
-            if session.get('name'):
-                bot_reply = f"✅ {session['name']}, ваша заявка уже передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон клиники: 8-928-458-32-88"
+        # Если заявка уже была отправлена, НО клиент продолжает диалог - используем AI
+        elif session.get('telegram_sent', False):
+            print("🤖 Заявка уже отправлена, но продолжаем диалог...")
+            
+            if REPLICATE_API_TOKEN and len(REPLICATE_API_TOKEN) > 20:
+                try:
+                    ai_task = asyncio.create_task(
+                        asyncio.to_thread(
+                            generate_bot_reply,
+                            REPLICATE_API_TOKEN,
+                            user_message,
+                            is_first_in_session,
+                            bool(session['name']),
+                            bool(session['phone']),
+                            True,  # telegram_sent = True (для контекста)
+                            last_procedure
+                        )
+                    )
+                    
+                    try:
+                        bot_reply = await asyncio.wait_for(ai_task, timeout=8.0)
+                        print(f"✅ AI ответ сгенерирован за <8 сек")
+                    except asyncio.TimeoutError:
+                        print(f"⚠️ Таймаут AI (8 сек), используем fallback")
+                        ai_task.cancel()
+                        bot_reply = get_fallback_response(user_message)
+                        
+                except Exception as e:
+                    print(f"❌ Ошибка при вызове AI: {str(e)}")
+                    bot_reply = get_fallback_response(user_message)
             else:
-                bot_reply = "✅ Ваша заявка уже передана менеджеру. С вами свяжутся для подтверждения записи.\n\n📞 Телефон клиники: 8-928-458-32-88"
+                bot_reply = get_fallback_response(user_message)
         
+        # Обычный режим (заявка еще не отправлена)
         elif REPLICATE_API_TOKEN and len(REPLICATE_API_TOKEN) > 20:
             print("🤖 Использую AI для генерации ответа...")
             
@@ -409,7 +438,7 @@ async def chat_endpoint(request: Request):
                         is_first_in_session,
                         bool(session['name']),
                         bool(session['phone']),
-                        session.get('telegram_sent', False),
+                        False,  # telegram_sent = False
                         last_procedure
                     )
                 )
@@ -430,6 +459,7 @@ async def chat_endpoint(request: Request):
                 print(f"❌ Ошибка при вызове AI: {str(e)}")
                 bot_reply = get_fallback_response(user_message)
         
+        # Fallback если AI недоступен
         else:
             print("⚠️ AI недоступен, использую простую логику")
             bot_reply = get_fallback_response(user_message)
