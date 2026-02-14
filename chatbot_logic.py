@@ -215,7 +215,7 @@ def create_system_prompt():
         price_section += f"📍 Адрес в Адлере: {clinic.get('address_adler', 'ул. Кирова 26а')}\n"
         price_section += f"📞 Телефон: {clinic.get('phone', '8-928-458-32-88')}\n"
         price_section += f"⏰ Часы работы: {clinic.get('hours', 'Ежедневно 10:00–20:00')}\n"
-        price_section += f"💳 {clinic.get('no_installment', 'Рассрочка и кредитование НЕ предоставляются')}\n"
+        price_section += f"💳 {clinic.get('no_installment', 'Рассрочка и кредитование предоставляются')}\n"
     
     full_prompt = base_prompt + price_section
     
