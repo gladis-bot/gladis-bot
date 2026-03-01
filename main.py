@@ -12,6 +12,7 @@ import re
 from datetime import datetime, timedelta
 import requests
 import time
+from telegram_bot_handler import telegram_polling
 
 # Загружаем переменные окружения
 load_dotenv()
