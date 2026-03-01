@@ -8,6 +8,7 @@
 import os
 import asyncio
 import requests
+import re
 from typing import Dict, Any
 from datetime import datetime, timedelta
 
@@ -75,6 +76,113 @@ async def periodic_cleanup():
         except Exception as e:
             print(f"❌ Ошибка в periodic_cleanup: {e}")
 
+async def extract_contacts_from_message_ai(message: str, session: Dict[str, Any], api_key: str):
+    """Извлекает контакты из сообщения с использованием AI (как в main.py)"""
+    try:
+        message_lower = message.lower()
+        
+        # ===== ПОИСК ТЕЛЕФОНА (регулярками) =====
+        phone_patterns = [
+            r'\b8[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
+            r'\b\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
+            r'\b7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
+        ]
+        
+        phone_matches = []
+        for pattern in phone_patterns:
+            matches = re.findall(pattern, message)
+            if matches:
+                phone_matches.extend(matches)
+                break
+        
+        if phone_matches and not session['phone']:
+            raw_phone = phone_matches[0]
+            clean_phone = re.sub(r'\D', '', raw_phone)
+            
+            if len(clean_phone) == 10:
+                clean_phone = '7' + clean_phone
+            elif len(clean_phone) == 11 and clean_phone.startswith('8'):
+                clean_phone = '7' + clean_phone[1:]
+            
+            if 10 <= len(clean_phone) <= 11:
+                session['phone'] = clean_phone
+                print(f"📞 Найден телефон: {raw_phone} → {session['phone']}")
+        
+        # ===== ПОИСК ИМЕНИ (сначала регулярками, потом AI) =====
+        temp_name = None
+        
+        russian_names = re.findall(r'\b[А-ЯЁ][а-яё]{1,20}\b', message)
+        
+        common_russian_names = [
+            'анна', 'мария', 'елена', 'ольга', 'наталья', 'ирина', 'светлана',
+            'александра', 'татьяна', 'юлия', 'евгения', 'дарья', 'екатерина',
+            'виктория', 'иван', 'алексей', 'сергей', 'андрей', 'дмитрий', 'михаил',
+            'владимир', 'павел', 'максим', 'николай', 'евгений', 'артем', 'антон',
+            'вадим', 'рома', 'кирилл', 'игорь', 'вадим'
+        ]
+        
+        for name in russian_names:
+            name_lower = name.lower()
+            
+            procedure_words = ['ботокс', 'эпиляция', 'лазер', 'коллаген', 
+                             'чистка', 'пилинг', 'смас', 'морфиус', 'александрит',
+                             'перманент', 'биоревитализация', 'инъекция', 'мезотерапия']
+            
+            is_procedure = any(proc in name_lower for proc in procedure_words)
+            is_common_name = name_lower in common_russian_names
+            is_near_phone = phone_matches and (abs(message.find(name) - message.find(phone_matches[0])) < 30)
+            
+            if (is_common_name and not is_procedure) or (is_near_phone and not is_procedure):
+                temp_name = name
+                print(f"👤 Найдено возможное имя в сообщении: {temp_name}")
+                break
+        
+        if temp_name and temp_name.lower() not in ['привет', 'здравствуйте', 'добрый', 'пока', 'спасибо']:
+            session['name'] = temp_name
+            print(f"✅ Обновлено имя в сессии: {session['name']}")
+        
+        # ===== AI ДЛЯ ИМЕНИ (если не нашли регулярками) =====
+        if (not session['name'] or session['name'].lower() in ['привет', 'здравствуйте', 'добрый']) and api_key and len(message.strip()) > 3:
+            try:
+                print(f"🔍 Использую AI для поиска имени в: '{message[:30]}...'")
+                from chatbot_logic import extract_name_with_ai
+                
+                found_name = await asyncio.to_thread(
+                    extract_name_with_ai,
+                    api_key,
+                    message
+                )
+                
+                if found_name and found_name.lower() not in ['привет', 'здравствуйте', 'добрый']:
+                    session['name'] = found_name
+                    print(f"✅ AI определил/исправил имя: {session['name']}")
+            except Exception as e:
+                print(f"⚠️ Ошибка AI при извлечении имени: {e}")
+        
+        # ===== ОПРЕДЕЛЕНИЕ ПРОЦЕДУРЫ =====
+        procedure_keywords = {
+            'лазерная эпиляция': ['эпиляция', 'лазер', 'удаление волос', 'бикини', 'подмышки', 'ноги', 'александрит', 'инновейшен', 'innovation', 'quanta'],
+            'чистка лица': ['чистка', 'пилинг', 'акне', 'поры', 'ультразвуковая', 'механическая', 'гидропилинг'],
+            'ботулотоксин': ['ботокс', 'ботулин', 'морщины', 'диспорт', 'гипергидроз'],
+            'лифтинг': ['лифтинг', 'подтяжка', 'смас', 'ультера', 'морфиус'],
+            'биоревитализация': ['биоревитализация', 'гиалуроновая', 'профхайло', 'hyaron'],
+            'капельницы': ['капельниц', 'инфузи', 'витамин', 'детокс', 'иммуносуппорт'],
+            'фотоомоложение': ['пигмент', 'пятн', 'веснушк', 'фотоомоложение', 'люмекка', 'lumecca'],
+            'мезотерапия': ['мезотерапия', 'инъекци', 'укол'],
+            'перманентный макияж': ['перманент', 'макияж', 'татуаж', 'брови', 'губы'],
+            'удаление тату': ['тату', 'татуировк', 'удаление тату'],
+            'прокол ушей': ['прокол', 'ухо', 'уши', 'пирсинг']
+        }
+        
+        for procedure_type, keywords in procedure_keywords.items():
+            if any(keyword in message_lower for keyword in keywords):
+                session['last_procedure'] = procedure_type
+                print(f"📋 Определена процедура: {procedure_type}")
+                break
+                
+    except Exception as e:
+        print(f"❌ Ошибка в extract_contacts_from_message_ai: {e}")
+
 async def handle_telegram_update(update: Dict[str, Any]):
     """
     Обрабатывает входящее обновление от Telegram
@@ -139,53 +247,31 @@ async def handle_telegram_update(update: Dict[str, Any]):
                 'telegram_chat_id': chat_id,
                 'telegram_user_id': user_id,
                 'is_business': is_business,
-                'telegram_sent': False,  # Флаг отправки полной заявки
-                'incomplete_sent': False  # Флаг отправки неполной заявки
+                'telegram_sent': False,
+                'incomplete_sent': False
             }
         
         session = telegram_sessions[session_key]
         session['text_parts'].append(text)
         session['message_count'] += 1
         
-        # Определяем процедуру из сообщения (как в main.py)
-        message_lower = text.lower()
-        procedure_keywords = {
-            'лазерная эпиляция': ['эпиляция', 'лазер', 'удаление волос', 'бикини', 'подмышки', 'ноги', 'александрит', 'инновейшен', 'innovation', 'quanta'],
-            'чистка лица': ['чистка', 'пилинг', 'акне', 'поры', 'ультразвуковая', 'механическая', 'гидропилинг'],
-            'ботулотоксин': ['ботокс', 'ботулин', 'морщины', 'диспорт', 'гипергидроз'],
-            'лифтинг': ['лифтинг', 'подтяжка', 'смас', 'ультера', 'морфиус'],
-            'биоревитализация': ['биоревитализация', 'гиалуроновая', 'профхайло', 'hyaron'],
-            'капельницы': ['капельниц', 'инфузи', 'витамин', 'детокс', 'иммуносуппорт'],
-            'фотоомоложение': ['пигмент', 'пятн', 'веснушк', 'фотоомоложение', 'люмекка', 'lumecca'],
-            'мезотерапия': ['мезотерапия', 'инъекци', 'укол'],
-            'перманентный макияж': ['перманент', 'макияж', 'татуаж', 'брови', 'губы'],
-            'удаление тату': ['тату', 'татуировк', 'удаление тату'],
-            'прокол ушей': ['прокол', 'ухо', 'уши', 'пирсинг']
-        }
-        
-        for procedure_type, keywords in procedure_keywords.items():
-            if any(keyword in message_lower for keyword in keywords):
-                session['last_procedure'] = procedure_type
-                print(f"📋 Определена процедура: {procedure_type}")
-                break
-        
-        # Извлекаем контакты
-        await extract_contacts_from_message(text, session)
+        # Извлекаем контакты и процедуру с помощью AI
+        api_key = os.getenv("REPLICATE_API_TOKEN")
+        await extract_contacts_from_message_ai(text, session, api_key)
         
         # Генерируем ответ через AI
         from chatbot_logic import generate_bot_reply
         
-        api_key = os.getenv("REPLICATE_API_TOKEN")
         if not api_key:
             reply = "Здравствуйте! Клиника GLADIS. Чем могу помочь?"
         else:
             is_first = session['message_count'] == 1
             has_name = bool(session['name'])
             has_phone = bool(session['phone'])
-            telegram_sent = False  # В Telegram не отправляем повторно
+            telegram_sent = False
             last_procedure = session.get('last_procedure')
             
-            # Генерируем ответ (в отдельном потоке, чтобы не блокировать)
+            # Генерируем ответ (в отдельном потоке)
             reply = await asyncio.to_thread(
                 generate_bot_reply,
                 api_key,
@@ -200,9 +286,9 @@ async def handle_telegram_update(update: Dict[str, Any]):
         # Отправляем ответ
         await send_telegram_reply(chat_id, reply)
         
-        # Проверяем, нужно ли отправить заявку (как в main.py)
+        # Проверяем, нужно ли отправить заявку
         if session['name'] and session['phone'] and not session.get('telegram_sent', False):
-            # Определяем, есть ли явное намерение записаться
+            message_lower = text.lower()
             explicit_intent = any(word in message_lower for word in [
                 'запис', 'хочу', 'нужно', 'можно', 'готов', 'давайте', 
                 'интересует', 'завтра', 'сегодня', 'после'
@@ -216,9 +302,10 @@ async def handle_telegram_update(update: Dict[str, Any]):
                 full_conversation = "\n".join(session['text_parts'])
                 source = "Telegram (личка @gladisSochi)" if is_business else "Telegram (личка боту)"
                 
-                # Добавляем источник в заявку
                 session_with_source = session.copy()
                 session_with_source['source'] = source
+                if session.get('last_procedure'):
+                    session_with_source['procedure_type'] = session['last_procedure']
                 
                 await asyncio.to_thread(
                     send_complete_application_to_telegram,
@@ -233,68 +320,12 @@ async def handle_telegram_update(update: Dict[str, Any]):
         print(f"   📞 Телефон: {'✅ ' + str(session['phone']) if session['phone'] else '❌ Нет'}")
         print(f"   📨 Отправлено в группу: {'✅' if session.get('telegram_sent') else '❌'}")
         print(f"   💉 Процедура: {session.get('last_procedure', '❌ Не определена')}")
-        print(f"   ✅ Ответ отправлен")
+        print(f"   🤖 Ответ: {reply[:100]}..." if len(reply) > 100 else f"   🤖 Ответ: {reply}")
         
     except Exception as e:
         print(f"❌ Ошибка обработки Telegram сообщения: {e}")
         import traceback
         traceback.print_exc()
-
-async def extract_contacts_from_message(message: str, session: Dict[str, Any]):
-    """Упрощенное извлечение контактов (аналог из main.py)"""
-    import re
-    
-    message_lower = message.lower()
-    
-    # Поиск телефона
-    phone_patterns = [
-        r'\b8[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
-        r'\b\+7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
-        r'\b7[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b',
-    ]
-    
-    phone_matches = []
-    for pattern in phone_patterns:
-        matches = re.findall(pattern, message)
-        if matches:
-            phone_matches.extend(matches)
-            break
-    
-    if phone_matches and not session['phone']:
-        raw_phone = phone_matches[0]
-        clean_phone = re.sub(r'\D', '', raw_phone)
-        
-        if len(clean_phone) == 10:
-            clean_phone = '7' + clean_phone
-        elif len(clean_phone) == 11 and clean_phone.startswith('8'):
-            clean_phone = '7' + clean_phone[1:]
-        
-        if 10 <= len(clean_phone) <= 11:
-            session['phone'] = clean_phone
-            print(f"📞 Найден телефон: {raw_phone} → {session['phone']}")
-    
-    # Поиск имени
-    russian_names = re.findall(r'\b[А-ЯЁ][а-яё]{2,}\b', message)
-    
-    common_russian_names = [
-        'анна', 'мария', 'елена', 'ольга', 'наталья', 'ирина', 'светлана',
-        'александра', 'татьяна', 'юлия', 'евгения', 'дарья', 'екатерина',
-        'виктория', 'иван', 'алексей', 'сергей', 'андрей', 'дмитрий', 'михаил'
-    ]
-    
-    for name in russian_names:
-        name_lower = name.lower()
-        
-        procedure_words = ['ботокс', 'эпиляция', 'лазер', 'коллаген', 
-                         'чистка', 'пилинг', 'смас', 'морфиус', 'александрит']
-        
-        is_procedure = any(proc in name_lower for proc in procedure_words)
-        is_common_name = name_lower in common_russian_names
-        
-        if (is_common_name and not is_procedure):
-            session['name'] = name
-            print(f"👤 Найдено имя: {session['name']}")
-            break
 
 async def send_telegram_reply(chat_id: int, text: str):
     """
@@ -370,10 +401,6 @@ async def telegram_polling():
             
         except asyncio.CancelledError:
             print("🛑 Telegram polling остановлен")
-            break
-        except Exception as e:
-            print(f"❌ Ошибка polling: {e}")
-            await asyncio.sleep(5)
             break
         except Exception as e:
             print(f"❌ Ошибка polling: {e}")
