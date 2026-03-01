@@ -548,7 +548,13 @@ async def startup_event():
     print("="*60)
     
     print(f"🤖 AI сервис: {'✅ Replicate' if REPLICATE_API_TOKEN else '❌ Не настроен'}")
-    print(f"📱 Telegram: {'✅ Настроен' if TELEGRAM_BOT_TOKEN else '⚠️ Только логи'}")
+    print(f"📱 Telegram (отправка в группу): {'✅ Настроен' if TELEGRAM_BOT_TOKEN else '⚠️ Только логи'}")
+    
+    # Запускаем Telegram polling для ответов на сообщения ← НОВОЕ
+    if TELEGRAM_BOT_TOKEN:  # ← НОВОЕ
+        print("📱 Запуск обработки входящих Telegram сообщений...")  # ← НОВОЕ
+        asyncio.create_task(telegram_polling())  # ← НОВОЕ
+        print("✅ Telegram polling запущен (бот готов отвечать в личке @sochigladisbot и @gladisSochi)")  # ← НОВОЕ
     
     if RENDER_EXTERNAL_URL and RENDER_EXTERNAL_URL.startswith("http"):
         print(f"🔔 Keep-alive URL: {RENDER_EXTERNAL_URL}")
