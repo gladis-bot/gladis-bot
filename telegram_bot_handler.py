@@ -414,16 +414,21 @@ async def handle_telegram_update(update: Dict[str, Any]):
         traceback.print_exc()
 
 async def send_telegram_reply(chat_id: int, text: str):
-    """
-    Отправляет ответ пользователю в Telegram
-    """
     try:
         token = get_bot_token()
-        if not token:
-            print("❌ Нет токена бота")
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        
+        # Сначала проверим, может ли бот писать в этот чат
+        check_url = f"https://api.telegram.org/bot{token}/getChat"
+        check_response = await asyncio.to_thread(
+            requests.get, check_url, params={"chat_id": chat_id}, timeout=10
+        )
+        
+        if check_response.status_code != 200:
+            print(f"❌ Бот не имеет доступа к чату {chat_id}: {check_response.text}")
+            print("   Добавьте бота как администратора бизнес-аккаунта")
             return False
         
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload = {
             "chat_id": chat_id,
             "text": text,
@@ -438,6 +443,7 @@ async def send_telegram_reply(chat_id: int, text: str):
             return True
         else:
             print(f"❌ Ошибка Telegram API: {response.status_code}")
+            print(f"   Ответ: {response.text}")
             return False
             
     except Exception as e:
