@@ -474,6 +474,14 @@ async def handle_telegram_update(update: Dict[str, Any]):
                 )
                 session['telegram_sent'] = True
                 print(f"✅ Заявка из Telegram отправлена в группу")
+                
+                # ===== НОВЫЙ КОД: Отправляем подтверждение клиенту =====
+                confirmation_text = f"✅ Спасибо, {session['name']}! Ваша заявка передана администратору. С вами свяжутся в ближайшее время для подтверждения записи.\n\n📞 Телефон клиники: 8-928-458-32-88"
+                
+                # Отправляем подтверждение
+                await send_telegram_reply(chat_id, confirmation_text, business_id)
+                print(f"✅ Подтверждение отправлено клиенту")
+                # ===== КОНЕЦ НОВОГО КОДА =====
         
         print(f"📊 СОСТОЯНИЕ TELEGRAM СЕССИИ:")
         print(f"   👤 Имя: {'✅ ' + session['name'] if session['name'] else '❌ Нет'}")
