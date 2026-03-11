@@ -189,7 +189,7 @@ async def extract_contacts_from_message_ai(message: str, session: Dict[str, Any]
                 from chatbot_logic import extract_name_with_ai
                 
                 detected_procedure = await asyncio.to_thread(
-                    extract_name_with_ai,  # Переиспользуем функцию, но с другим промптом
+                    extract_name_with_ai,
                     api_key,
                     procedure_prompt
                 )
@@ -201,30 +201,6 @@ async def extract_contacts_from_message_ai(message: str, session: Dict[str, Any]
                     'фотоомоложение', 'мезотерапия', 'перманентный макияж',
                     'удаление тату', 'прокол ушей'
                 ]
-
-                # Если AI не определил процедуру, проверяем по ключевым словам
-                if not session.get('last_procedure'):
-                    message_lower = message.lower()
-                    for proc_name, keywords in procedure_keywords_map.items():
-                        if any(keyword in message_lower for keyword in keywords):
-                            session['last_procedure'] = proc_name
-                            print(f"📋 Процедура определена по ключевым словам: {proc_name}")
-                            break
-                                
-                # Расширенный список ключевых слов для процедур
-                procedure_keywords_map = {
-                    'капельницы': ['капельниц', 'иммуносуппорт', 'детокс', 'витамин', 'инфузи', 'лаеннек'],
-                    'лазерная эпиляция': ['эпиляция', 'лазер', 'удаление волос', 'бикини', 'подмышки', 'ноги'],
-                    'чистка лица': ['чистка', 'пилинг', 'акне', 'поры'],
-                    'ботулотоксин': ['ботокс', 'ботулин', 'морщины'],
-                    'лифтинг': ['лифтинг', 'подтяжка', 'смас', 'морфиус', 'ультера'],
-                    'биоревитализация': ['биоревитализация', 'гиалуроновая', 'профхайло'],
-                    'фотоомоложение': ['фотоомоложение', 'люмекка', 'пигмент', 'пятна'],
-                    'мезотерапия': ['мезотерапия', 'инъекции', 'уколы'],
-                    'перманентный макияж': ['перманент', 'татуаж', 'брови', 'губы'],
-                    'удаление тату': ['удаление тату', 'татуировка'],
-                    'прокол ушей': ['прокол', 'уши', 'пирсинг']
-                }
                 
                 if detected_procedure and detected_procedure.lower() in [p.lower() for p in valid_procedures]:
                     # Находим правильное название с учетом регистра
@@ -242,6 +218,30 @@ async def extract_contacts_from_message_ai(message: str, session: Dict[str, Any]
                         if any(word in detected_procedure.lower() for word in valid_proc.lower().split()):
                             session['last_procedure'] = valid_proc
                             print(f"✅ Найдено частичное совпадение: {session['last_procedure']}")
+                            break
+                
+                # Расширенный список ключевых слов для процедур (для fallback)
+                procedure_keywords_map = {
+                    'капельницы': ['капельниц', 'иммуносуппорт', 'детокс', 'витамин', 'инфузи', 'лаеннек'],
+                    'лазерная эпиляция': ['эпиляция', 'лазер', 'удаление волос', 'бикини', 'подмышки', 'ноги'],
+                    'чистка лица': ['чистка', 'пилинг', 'акне', 'поры'],
+                    'ботулотоксин': ['ботокс', 'ботулин', 'морщины'],
+                    'лифтинг': ['лифтинг', 'подтяжка', 'смас', 'морфиус', 'ультера'],
+                    'биоревитализация': ['биоревитализация', 'гиалуроновая', 'профхайло'],
+                    'фотоомоложение': ['фотоомоложение', 'люмекка', 'пигмент', 'пятна'],
+                    'мезотерапия': ['мезотерапия', 'инъекции', 'уколы'],
+                    'перманентный макияж': ['перманент', 'татуаж', 'брови', 'губы'],
+                    'удаление тату': ['удаление тату', 'татуировка'],
+                    'прокол ушей': ['прокол', 'уши', 'пирсинг']
+                }
+
+                # Если AI не определил процедуру, проверяем по ключевым словам
+                if not session.get('last_procedure'):
+                    message_lower = message.lower()
+                    for proc_name, keywords in procedure_keywords_map.items():
+                        if any(keyword in message_lower for keyword in keywords):
+                            session['last_procedure'] = proc_name
+                            print(f"📋 Процедура определена по ключевым словам: {proc_name}")
                             break
                             
             except Exception as e:
@@ -262,6 +262,7 @@ async def extract_contacts_from_message_ai(message: str, session: Dict[str, Any]
                     'прокол ушей': ['прокол', 'ухо', 'уши']
                 }
                 
+                message_lower = message.lower()
                 for procedure_type, keywords in procedure_keywords.items():
                     if any(keyword in message_lower for keyword in keywords):
                         session['last_procedure'] = procedure_type
@@ -284,6 +285,7 @@ async def extract_contacts_from_message_ai(message: str, session: Dict[str, Any]
                 'прокол ушей': ['прокол', 'ухо', 'уши']
             }
             
+            message_lower = message.lower()
             for procedure_type, keywords in procedure_keywords.items():
                 if any(keyword in message_lower for keyword in keywords):
                     session['last_procedure'] = procedure_type
