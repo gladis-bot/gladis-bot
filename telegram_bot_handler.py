@@ -409,23 +409,63 @@ async def handle_telegram_update(update: Dict[str, Any]):
         # Проверяем, нужно ли отправить заявку
         if session['name'] and session['phone'] and not session.get('telegram_sent', False):
             message_lower = text.lower()
+            
+            # Расширенный список слов, указывающих на намерение записаться
             explicit_intent = any(word in message_lower for word in [
                 'запис', 'хочу', 'нужно', 'можно', 'готов', 'давайте', 
-                'интересует', 'завтра', 'сегодня', 'после'
+                'интересует', 'завтра', 'сегодня', 'после', 'да', 'ок',
+                'хорошо', 'согласен', 'давай', 'запишите'
             ])
             
-            procedure_mentioned = session.get('last_procedure') is not None
+            # Проверяем всю историю сообщений на наличие процедуры
+            full_history = " ".join(session.get('text_parts', [])).lower()
             
-            if explicit_intent or procedure_mentioned:
+            # Словарь процедур для проверки
+            procedure_check = {
+                'капельницы': ['капельниц', 'иммуносуппорт', 'детокс', 'витамин'],
+                'лазерная эпиляция': ['эпиляция', 'лазер', 'бикини', 'подмышки', 'ноги'],
+                'чистка лица': ['чистка', 'пилинг', 'акне', 'поры'],
+                'ботулотоксин': ['ботокс', 'ботулин', 'морщины'],
+                'перманентный макияж': ['перманент', 'татуаж', 'брови', 'губы']
+            }
+            
+            # Определяем, есть ли процедура в истории
+            procedure_in_history = False
+            detected_procedure = session.get('last_procedure')
+            
+            if not detected_procedure:
+                for proc_name, keywords in procedure_check.items():
+                    if any(keyword in full_history for keyword in keywords):
+                        detected_procedure = proc_name
+                        procedure_in_history = True
+                        print(f"📋 Процедура найдена в истории: {proc_name}")
+                        break
+            
+            procedure_mentioned = session.get('last_procedure') is not None or procedure_in_history
+            
+            # Отправляем заявку если есть контакты И (намерение записаться ИЛИ процедура упоминалась)
+            if explicit_intent and procedure_mentioned:
+                print(f"🚨 ОТПРАВЛЯЕМ ЗАЯВКУ!")
+                print(f"   Намерение: {explicit_intent}")
+                print(f"   Процедура: {detected_procedure or 'Не определена'}")
+                print(f"   Имя: {session['name']}")
+                print(f"   Телефон: {session['phone']}")
+                
                 from telegram_utils import send_complete_application_to_telegram
                 
+                # Полная история диалога
                 full_conversation = "\n".join(session['text_parts'])
                 source = "Telegram (личка @gladisSochi)" if is_business else "Telegram (личка боту)"
                 
                 session_with_source = session.copy()
                 session_with_source['source'] = source
-                if session.get('last_procedure'):
-                    session_with_source['procedure_type'] = session['last_procedure']
+                
+                # Сохраняем процедуру если нашли в истории
+                if detected_procedure:
+                    session_with_source['procedure_type'] = detected_procedure
+                
+                # Добавляем всю историю для контекста
+                session_with_source['full_conversation'] = full_conversation
                 
                 await asyncio.to_thread(
                     send_complete_application_to_telegram,
