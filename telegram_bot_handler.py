@@ -307,6 +307,7 @@ async def handle_telegram_update(update: Dict[str, Any]):
             text = message.get('text', '')
             username = message['from'].get('first_name', 'Пользователь')
             is_business = True
+            business_connection_id = message.get('business_connection_id')  # ← ЭТА СТРОКА НОВАЯ
         
         else:
             return  # Игнорируем другие типы
@@ -333,6 +334,7 @@ async def handle_telegram_update(update: Dict[str, Any]):
                 'telegram_chat_id': chat_id,
                 'telegram_user_id': user_id,
                 'is_business': is_business,
+                'business_connection_id': None,
                 'telegram_sent': False,
                 'incomplete_sent': False
             }
@@ -340,6 +342,10 @@ async def handle_telegram_update(update: Dict[str, Any]):
         session = telegram_sessions[session_key]
         session['text_parts'].append(text)
         session['message_count'] += 1
+
+        # Сохраняем business_connection_id если это бизнес-сообщение
+        if is_business:
+            session['business_connection_id'] = business_connection_id
         
         # Извлекаем контакты и процедуру с помощью AI
         api_key = os.getenv("REPLICATE_API_TOKEN")
@@ -370,7 +376,8 @@ async def handle_telegram_update(update: Dict[str, Any]):
             )
         
         # Отправляем ответ
-        await send_telegram_reply(chat_id, reply)
+        business_id = session.get('business_connection_id') if is_business else None
+        await send_telegram_reply(chat_id, reply, business_id)
         
         # Проверяем, нужно ли отправить заявку
         if session['name'] and session['phone'] and not session.get('telegram_sent', False):
@@ -413,33 +420,35 @@ async def handle_telegram_update(update: Dict[str, Any]):
         import traceback
         traceback.print_exc()
 
-async def send_telegram_reply(chat_id: int, text: str):
+async def send_telegram_reply(chat_id: int, text: str, business_connection_id: str = None):
+    """
+    Отправляет ответ пользователю в Telegram
+    Если есть business_connection_id - отправляем через бизнес-аккаунт
+    """
     try:
         token = get_bot_token()
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        
-        # Сначала проверим, может ли бот писать в этот чат
-        check_url = f"https://api.telegram.org/bot{token}/getChat"
-        check_response = await asyncio.to_thread(
-            requests.get, check_url, params={"chat_id": chat_id}, timeout=10
-        )
-        
-        if check_response.status_code != 200:
-            print(f"❌ Бот не имеет доступа к чату {chat_id}: {check_response.text}")
-            print("   Добавьте бота как администратора бизнес-аккаунта")
+        if not token:
+            print("❌ Нет токена бота")
             return False
         
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload = {
             "chat_id": chat_id,
             "text": text,
             "parse_mode": "HTML"
         }
         
+        # Если есть business_connection_id - отправляем через бизнес-аккаунт
+        if business_connection_id:
+            payload["business_connection_id"] = business_connection_id
+            print(f"📱 Отправка через бизнес-аккаунт")
+        
         response = await asyncio.to_thread(
             requests.post, url, json=payload, timeout=10
         )
         
         if response.status_code == 200:
+            print(f"✅ Ответ успешно отправлен")
             return True
         else:
             print(f"❌ Ошибка Telegram API: {response.status_code}")
