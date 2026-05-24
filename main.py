@@ -516,6 +516,29 @@ async def ping():
         "timestamp": datetime.now().isoformat(),
         "service": "gladis-chatbot"
     }
+# 👇 СЮДА ВСТАВЬТЕ НОВЫЙ ОБРАБОТЧИК 👇
+
+@app.post("/submit-form")
+async def submit_form(request: Request):
+    """Принимает заявки с сайта и отправляет в Telegram"""
+    try:
+        data = await request.json()
+        name = data.get('name', '')
+        phone = data.get('phone', '')
+        
+        if not name or not phone:
+            return {"status": "error", "message": "empty fields"}
+        
+        from datetime import datetime
+        message = f"📌 НОВАЯ ЗАЯВКА С САЙТА!\n\n👤 Имя: {name}\n📞 Телефон: {phone}\n⏰ Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        # Отправляем в Telegram
+        await send_to_telegram(message, name, phone)
+        
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Ошибка в /submit-form: {e}")
+        return {"status": "error", "message": str(e)}
 
 # Убираем обработчики сигналов - они конфликтуют с Render
 # Вместо этого используем простой keep-alive с requests
